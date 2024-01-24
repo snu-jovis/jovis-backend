@@ -29,3 +29,12 @@ python manage.py migrate
 ```bash
 python manage.py runserver
 ```
+
+
+## 짱쉬운 PostgreSQL 세팅법
+
+아래 명령어는 docker를 이용해서 PostgreSQL 서버를 실행합니다.
+현재 `./web/views.py`에 있는 PostgreSQL 세팅은 아래 명령어를 이용하여 실행했을 때 수정 없이 사용할 수 있습니다.
+```bash
+docker run --name some-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
+```
