@@ -133,3 +133,12 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Query Plan Optimization Visualization
+PG_LOG_FILE = ''
+PG_LOG_BACKUP_DIR = ''        # should be made before run
+
+if PG_LOG_FILE == '' or PG_LOG_BACKUP_DIR == '':
+    print('Please set PG_LOG_FILE or PG_LOG_BACKUP_DIR before start!!!! You can see these in `backend/settings.py`')
+    exit()
