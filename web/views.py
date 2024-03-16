@@ -37,9 +37,9 @@ def parse_path_with_state_machine(logs: list, cur: int):
     state = 'PathHeader'
     path_buffer = {}
 
-    while state != 'PathDone':
+    while state != 'PathDone' and cur < len(logs):
         line = logs[cur].strip()
-        print(state, line)
+        print(cur, state, line)
         #input()
 
         if state == 'PathHeader':
@@ -58,7 +58,8 @@ def parse_path_with_state_machine(logs: list, cur: int):
 
             path_buffer['node'] = node
             path_buffer['relid'] = relid
-            path_buffer['ro_relid'] = ro_relid
+            if ro_relid:
+                path_buffer['ro_relid'] = ro_relid
             path_buffer['rows'] = int(rows)
             path_buffer['startup_cost'] = float(startup_cost)
             path_buffer['total_cost'] = float(total_cost)
@@ -71,16 +72,24 @@ def parse_path_with_state_machine(logs: list, cur: int):
             # a temp state to decide if it is PathKeys, PathJoin, or PathMJoin
             _PATHKEYS_EXP = r'\ *pathkeys:\ (.*)'
             _CLAUSES_EXP = r'\ *clauses:(.*)'
-            _MERGEJOIN_INFO_EXP = r'\ *sortouter=(\d) sortinner=(\d) materializeinner=(\d)'
+            #_MERGEJOIN_INFO_EXP = r'\ *sortouter=(\d) sortinner=(\d) materializeinner=(\d)'
 
             if re.match(_PATHKEYS_EXP, line):
                 state = 'PathKeys'
             elif re.match(_CLAUSES_EXP, line):
                 state = 'PathJoin'
-            elif re.match(_MERGEJOIN_INFO_EXP, line):
-                state = 'PathMJoin'
+            #elif re.match(_MERGEJOIN_INFO_EXP, line):
+            #    state = 'PathMJoin'
             else:
-                state = 'PathDone'
+                # check indentation width
+                raw_cur_line, raw_prev_line = logs[cur].replace('\t', '    '), logs[cur-1].replace('\t', '    ')
+                cur_indent = len(raw_cur_line) - len(raw_cur_line.lstrip())
+                prev_indent = len(raw_prev_line) - len(raw_prev_line.lstrip())
+                is_sub = prev_indent < cur_indent
+                if is_sub:
+                    state = 'PathSub'
+                else:
+                    state = 'PathDone'
 
         elif state == 'PathKeys':
             _PATHKEYS_EXP = r'\ *pathkeys:\ (.*)'
@@ -132,12 +141,31 @@ def parse_path_with_state_machine(logs: list, cur: int):
             path_buffer['join']['outer'] = outer
 
             state = 'PathInner'
+            cur = _cur
 
         elif state == 'PathInner':
             inner, _cur = parse_path_with_state_machine(logs, cur)
             path_buffer['join']['inner'] = inner 
 
+            state = 'PathWait3'
+            cur = _cur
+
+        elif state == 'PathSub':
+            sub, _cur = parse_path_with_state_machine(logs, cur)
+            path_buffer['sub'] = sub
+
             state = 'PathDone'
+            cur = _cur
+
+        elif state == 'PathWait3':
+            raw_cur_line, raw_prev_line = logs[cur].replace('\t', '    '), logs[cur-1].replace('\t', '    ')
+            cur_indent = len(raw_cur_line) - len(raw_cur_line.lstrip())
+            prev_indent = len(raw_prev_line) - len(raw_prev_line.lstrip())
+            is_super = prev_indent > cur_indent
+            if is_super:
+                state = 'PathDone'
+            else:
+                state = 'PathSub'
 
     return path_buffer, cur
 
@@ -154,9 +182,9 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
     state = 'Start'
     buffer = {}
 
-    while state != 'Done':
+    while state != 'Done' and cur < len(logs):
         line = logs[cur].strip()
-        print(state, line, cur)
+        print(cur, state, line)
 
         if state == 'Start':
             if _START_SIGN in line:
@@ -296,7 +324,7 @@ def process_log(log_lines):
             ret['base'].append(base)
             cur = _cur - 1
 
-        if _START_BASE_SIGN in line:
+        if _START_DP_SIGN in line:
             dp, _cur = get_dp_path(log_lines, cur)
             ret['dp'].append(dp)
             cur = _cur - 1
