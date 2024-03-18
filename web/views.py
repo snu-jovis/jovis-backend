@@ -301,6 +301,75 @@ def get_dp_path(log_lines: list, cur: int):
     _END_SIGN = '[VPQO][DP] standard_join_search done'
     return parse_with_state_machine(log_lines, cur, _START_SIGN, _END_SIGN)
 
+def parse_geqo_with_state_machine(logs: list):
+    """
+    scan all logs and parse geqo data
+    """
+    cur = 0
+    state = 'Init'
+    buffer = {}
+
+    while cur < len(logs):
+        line = logs[cur].strip()
+        print(cur, state, line)
+
+        if state == 'Init':
+            _INIT_EXP = r'.*\[VPQO\]\[GEQO\] GEQO selected (\d*) pool entries, best (\d*\.\d*), worst (\d*\.\d*)'
+            initinfo = re.match(_INIT_EXP, line)
+            if initinfo is None:
+                cur += 1
+                continue
+
+            pool_size, best, worst = initinfo.groups()
+            buffer['pool_size'] = int(pool_size)
+            buffer['init'] = {'best': float(best), 'worst': float(worst)}
+            buffer['gen'] = []
+
+            state = 'Gen'
+            cur += 1
+
+        elif state == 'Gen':
+            _GENERATION_EXP = r'.*\[GEQO\] *(\d*).*Best: (\d*\.\d*)  Worst: (\d*\.\d*)  Mean: (\d*\.\d*)  Avg: (\d*\.\d*)'
+            geninfo = re.match(_GENERATION_EXP, line)
+            if geninfo is None:
+                cur += 1
+                continue
+
+            gen_num, best, worst, mean, avg = geninfo.groups()
+            buffer['gen'].append({
+                'gen_num': int(gen_num),
+                'best': float(best),
+                'worst': float(worst),
+                'mean': float(mean),
+                'avg': float(avg),
+                'pool': []
+            })
+
+            state = 'Pool'
+            cur += 1
+
+        elif state == 'Pool':
+            _POOL_EXP = r'\[GEQO\] (\d*)\)(.*) (\d*\.\d*)'
+            poolinfo = re.match(_POOL_EXP, line)
+            if poolinfo is None:
+                state = 'Gen'
+                cur += 1
+                continue
+
+            population_num, gene, fitness = poolinfo.groups()
+            buffer['gen'][-1]['pool'].append({
+                'population_num': int(population_num),
+                'gene': gene.strip(),
+                'fitness': float(fitness)
+            })
+
+            cur += 1
+
+    return buffer
+
+
+def get_geqo_data(log_lines: list) -> dict:
+    return parse_geqo_with_state_machine(log_lines)
 
 def process_log(log_lines):
     ret = {
@@ -317,6 +386,7 @@ def process_log(log_lines):
     _START_DP_SIGN = '[VPQO][DP] standard_join_search started'
 
     cur = 0
+    # first pass for base and DP
     while cur < len(log_lines):
         line = log_lines[cur].strip()
         if _START_BASE_SIGN in line:
@@ -330,6 +400,10 @@ def process_log(log_lines):
             cur = _cur - 1
 
         cur += 1
+
+    # second pass for GEQO
+    if ret['type'] == 'geqo':
+        ret['geqo'] = get_geqo_data(log_lines)
 
     return ret
         
