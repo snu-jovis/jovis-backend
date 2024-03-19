@@ -308,6 +308,7 @@ def parse_geqo_with_state_machine(logs: list):
     cur = 0
     state = 'Init'
     buffer = {}
+    tmpbuffer = {}
 
     while cur < len(logs):
         line = logs[cur].strip()
@@ -325,11 +326,65 @@ def parse_geqo_with_state_machine(logs: list):
             buffer['init'] = {'best': float(best), 'worst': float(worst)}
             buffer['gen'] = []
 
-            state = 'Gen'
+            state = 'Mapping'
+            cur += 1
+        
+        elif state == 'Mapping':
+            _MAPPING_EXP = r'\[VPQO\]\[GEQO\] gene=(\d*) => relids=(.*)'
+            mapinfo = re.match(_MAPPING_EXP, line)
+            if mapinfo is None:
+                if 'map' not in buffer:
+                    # skip until reaching mapping lines
+                    cur += 1
+                    continue
+                else:
+                    # end of the state
+                    state = 'Wait'
+                    continue
+
+            if 'map' not in buffer:
+                buffer['map'] = {}
+
+            gene, relids = mapinfo.groups()
+            buffer['map'][gene] = relids
             cur += 1
 
+        elif state == 'Wait':
+            _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (\d*\.\d*)  Worst: (\d*\.\d*)  Mean: (\d*\.\d*)  Avg: (\d*\.\d*)'
+            _OFFSPRING1_EXP = r'\[VPQO\]\[GEQO\] parents=\[(\d*), (\d*)\]'
+            if re.match(_GENERATION_EXP, line):
+                state = 'Gen'
+            elif re.match(_OFFSPRING1_EXP, line):
+                state = 'Offspring'
+            else:
+                cur += 1
+
+
+        elif state == 'Offspring':
+            _OFFSPRING1_EXP = r'\[VPQO\]\[GEQO\] parents=\[(\d*), (\d*)\]'
+
+            offspringinfo = re.match(_OFFSPRING1_EXP, line)
+
+            if offspringinfo:
+                parent1, parent2 = offspringinfo.groups()
+                tmpbuffer = {
+                    'parents': [int(parent1), int(parent2)]
+                }
+                cur += 1
+            else:
+                _OFFSPRING2_EXP = r'\[VPQO\]\[GEQO\] newone_idx=(\d*)'
+
+                # newone_idx following by parents could not be in the log
+                offspring2info = re.match(_OFFSPRING2_EXP, line)
+                if offspring2info:
+                    newone_idx = offspring2info.groups()[0]
+                    tmpbuffer['newone_idx'] = int(newone_idx)
+                    cur += 1
+
+                state = 'Gen'
+
         elif state == 'Gen':
-            _GENERATION_EXP = r'.*\[GEQO\] *(\d*).*Best: (\d*\.\d*)  Worst: (\d*\.\d*)  Mean: (\d*\.\d*)  Avg: (\d*\.\d*)'
+            _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (\d*\.\d*)  Worst: (\d*\.\d*)  Mean: (\d*\.\d*)  Avg: (\d*\.\d*)'
             geninfo = re.match(_GENERATION_EXP, line)
             if geninfo is None:
                 cur += 1
@@ -352,18 +407,34 @@ def parse_geqo_with_state_machine(logs: list):
             _POOL_EXP = r'\[GEQO\] (\d*)\)(.*) (\d*\.\d*)'
             poolinfo = re.match(_POOL_EXP, line)
             if poolinfo is None:
-                state = 'Gen'
+                state = 'Wait'
                 cur += 1
                 continue
 
             population_num, gene, fitness = poolinfo.groups()
-            buffer['gen'][-1]['pool'].append({
+
+            cur_idx = len(buffer['gen'][-1]['pool'])
+            data = {
                 'population_num': int(population_num),
                 'gene': gene.strip(),
                 'fitness': float(fitness)
-            })
+            }
+
+            is_initial_pool = len(buffer['gen']) == 1
+            if is_initial_pool is False:
+                if 'newone_idx' in tmpbuffer:
+                    if tmpbuffer['newone_idx'] == cur_idx:
+                        data['parents'] = tmpbuffer['parents']
+                    else :
+                        data['prev_num'] = cur_idx if cur_idx < tmpbuffer['newone_idx'] \
+                            else cur_idx - 1
+                else:
+                    data['prev_num'] = cur_idx
+
+            buffer['gen'][-1]['pool'].append(data)
 
             cur += 1
+            
 
     return buffer
 
