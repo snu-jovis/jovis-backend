@@ -477,11 +477,27 @@ def process_log(log_lines):
         ret['geqo'] = get_geqo_data(log_lines)
 
     return ret
+
+def try_explain_analyze(in_query: str) -> str:
+    hint_start, hint_end = in_query.find('/*+'), in_query.find('*/')
+    hint, query = '', ''
+    if hint_start != -1 and hint_end != -1:
+        hint = in_query[hint_start:hint_end+2]
+        query = in_query[hint_end+2:]
+    else:
+        query = in_query
+
+    if 'explain' not in query.lower():
+        query = 'EXPLAIN (ANALYZE true, VERBOSE true, FORMAT JSON) ' + query
+
+    return hint + ' ' + query
+
         
 class QueryView(APIView):
     def post(self, request, format=None):
         # SQL 공격이 근본적으로 가능하므로, 절대 링크를 외부공개 하지 마세요.
         q = request.data.get('query', 'EXPLAIN SELECT \'Hello World\'')
+        q = try_explain_analyze(q)
         
         # get query results
         conn = psycopg2.connect("host=localhost dbname=postgres user=postgres password=mysecretpassword")    # Connect to your postgres DB
