@@ -438,9 +438,39 @@ def parse_geqo_with_state_machine(logs: list):
 
     return buffer
 
+def parse_geqo_path(logs: list) -> dict:
+    # _GENE_EXP = r'\[VPQO\]\[GEQO\]\[JOININFO\]((:? \d)*)'
+    _GENE_EXP = r'\[VPQO\]\[GEQO\]\[JOININFO\]\ gene=((:? \d)*)'
+
+    cur = 0
+    buffer = {}
+
+    while cur < len(logs):
+        line = logs[cur].strip()
+        print(cur, line)
+
+        geneinfo = re.match(_GENE_EXP, line)
+        if geneinfo is None:
+            cur += 1
+            continue
+
+        gene = geneinfo.groups()[0].strip()
+        if gene in buffer:
+            cur += 1
+            continue
+
+        # reuse this
+        _buf, _cur = parse_with_state_machine(logs, cur, '[VPQO][GEQO][JOININFO] gene=', '[VPQO][GEQO][JOININFO] Done')
+        buffer[gene] = _buf
+        cur = _cur
+
+    return buffer
+
 
 def get_geqo_data(log_lines: list) -> dict:
-    return parse_geqo_with_state_machine(log_lines)
+    data = parse_geqo_with_state_machine(log_lines)
+    data['reloptinfo'] = parse_geqo_path(log_lines)
+    return data
 
 def process_log(log_lines):
     ret = {
