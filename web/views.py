@@ -364,7 +364,6 @@ def parse_geqo_with_state_machine(logs: list):
             _OFFSPRING1_EXP = r'\[VPQO\]\[GEQO\] parents=\[(\d*), (\d*)\]'
 
             offspringinfo = re.match(_OFFSPRING1_EXP, line)
-
             if offspringinfo:
                 parent1, parent2 = offspringinfo.groups()
                 tmpbuffer = {
@@ -372,12 +371,18 @@ def parse_geqo_with_state_machine(logs: list):
                 }
                 cur += 1
             else:
-                _OFFSPRING2_EXP = r'\[VPQO\]\[GEQO\] newone_idx=(\d*)'
+                # FIXME: This should be saperated into multiple states
+                _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (\d*\.\d*)  Worst: (\d*\.\d*)  Mean: (\d*\.\d*)  Avg: (\d*\.\d*)'
+                geninfo = re.match(_GENERATION_EXP, line)
+                if geninfo:
+                    # We should jump to the state 'Gen' cuz there is no newone_idx
+                    state = 'Gen'
+                    continue
 
-                # newone_idx following by parents could not be in the log
+                # Wait until we find newone_idx
+                _OFFSPRING2_EXP = r'\[VPQO\]\[GEQO\] newone_idx=(\d*)'
                 offspring2info = re.match(_OFFSPRING2_EXP, line)
                 if offspring2info is None:
-                    # we should be encountered the line.
                     cur += 1
                     continue
 
