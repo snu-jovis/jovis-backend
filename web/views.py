@@ -376,11 +376,14 @@ def parse_geqo_with_state_machine(logs: list):
 
                 # newone_idx following by parents could not be in the log
                 offspring2info = re.match(_OFFSPRING2_EXP, line)
-                if offspring2info:
-                    newone_idx = offspring2info.groups()[0]
-                    tmpbuffer['newone_idx'] = int(newone_idx)
+                if offspring2info is None:
+                    # we should be encountered the line.
                     cur += 1
+                    continue
 
+                newone_idx = offspring2info.groups()[0]
+                tmpbuffer['newone_idx'] = int(newone_idx)
+                cur += 1
                 state = 'Gen'
 
         elif state == 'Gen':
