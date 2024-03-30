@@ -16,12 +16,32 @@ def clear_previous_log():
 
 def read_and_clear_log():
     filename = f"{PG_LOG_BACKUP_DIR}/{time.time()}_pq"
-    os.system(f"cp {PG_LOG_FILE} {filename}")
+
+    # TODO: I have no idea why logfile from pg_ctl does not suppress 
+    #    STATEMENT even though I turned off log configurations.
+    # So, I manually remove the statements here to save disk and parsing cost.
+    f1 = open(PG_LOG_FILE, 'r')
+    ret = []
+    recent_removed = False
+    for line in f1.readlines():
+        if 'STATEMENT' in line:
+            recent_removed = True
+            continue
+
+        if recent_removed and line[0] == '\t':
+            continue
+
+        recent_removed = False
+        ret.append(line)
+
+    f1.close()
+
     os.system(f"echo '' > {PG_LOG_FILE}")
 
-    ret = None
-    with open(filename, 'r') as f:
-        ret = f.readlines()
+    f2 = open(filename, 'w')
+    for line in ret:
+        f2.write(line)
+    f2.close()
 
     return ret
 
@@ -350,7 +370,7 @@ def parse_geqo_with_state_machine(logs: list):
             cur += 1
 
         elif state == 'Wait':
-            _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (\d*\.\d*)  Worst: (\d*\.\d*)  Mean: (\d*\.\d*)  Avg: (\d*\.\d*)'
+            _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (.*)  Worst: (.*)  Mean: (.*)  Avg: (.*)'
             _OFFSPRING1_EXP = r'\[VPQO\]\[GEQO\] parents=\[(\d*), (\d*)\]'
             if re.match(_GENERATION_EXP, line):
                 state = 'Gen'
@@ -372,7 +392,7 @@ def parse_geqo_with_state_machine(logs: list):
                 cur += 1
             else:
                 # FIXME: This should be saperated into multiple states
-                _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (\d*\.\d*)  Worst: (\d*\.\d*)  Mean: (\d*\.\d*)  Avg: (\d*\.\d*)'
+                _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (.*)  Worst: (.*)  Mean: (.*)  Avg: (.*)'
                 geninfo = re.match(_GENERATION_EXP, line)
                 if geninfo:
                     # We should jump to the state 'Gen' cuz there is no newone_idx
@@ -392,7 +412,7 @@ def parse_geqo_with_state_machine(logs: list):
                 state = 'Gen'
 
         elif state == 'Gen':
-            _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (\d*\.\d*)  Worst: (\d*\.\d*)  Mean: (\d*\.\d*)  Avg: (\d*\.\d*)'
+            _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (.*)  Worst: (.*)  Mean: (.*)  Avg: (.*)'
             geninfo = re.match(_GENERATION_EXP, line)
             if geninfo is None:
                 cur += 1
@@ -412,7 +432,7 @@ def parse_geqo_with_state_machine(logs: list):
             cur += 1
 
         elif state == 'Pool':
-            _POOL_EXP = r'\[GEQO\] (\d*)\)(.*) (\d*\.\d*)'
+            _POOL_EXP = r'\[GEQO\] (\d*)\)(.*) (.*)'
             poolinfo = re.match(_POOL_EXP, line)
             if poolinfo is None:
                 state = 'Wait'
