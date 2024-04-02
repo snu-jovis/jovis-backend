@@ -572,7 +572,7 @@ class QueryView(APIView):
             opt_data = process_log(log_lines)
 
             # return
-            return Response({'query': q, 'result': str(records), 'optimizer': opt_data})
+            return Response({'query': q, 'result': records, 'optimizer': opt_data})
         except psycopg2.OperationalError as e:
             print(e)
             return Response({'error': str(e)})
