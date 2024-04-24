@@ -2,6 +2,9 @@ import psycopg2
 import os
 import time
 import re
+import os
+import time
+import re
 
 from django.shortcuts import render
 
@@ -500,23 +503,6 @@ def get_geqo_data(log_lines: list) -> dict:
     data['reloptinfo'] = parse_geqo_path(log_lines)
     return data
 
-def split_log_lines(log_lines):
-    _MARK = '[VPQO] split line'
-    ret, for_items = [], []
-    last = 0
-    for idx, line in enumerate(log_lines):
-        if _MARK not in line:
-            continue
-
-        ret.append(log_lines[last:idx])
-        last = idx
-
-        raw = line.split("RELOPTINFO")[1]
-        relids = raw[raw.find("(")+1:raw.find(")")]
-        for_items.append(relids)
-
-    return ret, for_items
-
 def process_log(log_lines):
     ret = {
         'type': 'dp',
@@ -572,6 +558,8 @@ class QueryView(APIView):
     def post(self, request, format=None):
         # SQL 공격이 근본적으로 가능하므로, 절대 링크를 외부공개 하지 마세요.
         q = request.data.get('query', 'EXPLAIN SELECT \'Hello World\'')
+        d = request.data.get('db', 'postgres')
+        q = try_explain_analyze(q)
         d = request.data.get('db', 'postgres')
         q = try_explain_analyze(q)
 
