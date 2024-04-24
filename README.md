@@ -1,40 +1,31 @@
-# pg_queryplans backend
+# Jovis Backend
 
-## Note
+## Installation
 
-- SQL을 직접 다루는 서버이므로, 절대 외부 IP로 공개하지 마세요. SQL 공격에 매우 취약하고, 공격의 대상이 될 수 있습니다.
-- `POST /query/` 만 지원하도록 간단하게 세팅했습니다. 아래 세팅을 완료한 뒤 postman이나 아래 명령어와 유사하게 테스트해보세요.
-
-```bash
-curl --location 'localhost:8000/query/' --form 'query="SELECT '\''hi!!!'\''"'
-```
-
-## 짱쉬운 세팅법
-
-1. 아래 명령어를 이용하여 requirements를 설치합니다.
+1. Use the following command to install the requirements.
 ```bash
 pip install -r requirements.txt
 ```
 
-2. 데이터베이스 설정을 변경해야 합니다. 
-`./web/views.py` 파일을 열고, `QueryView.post()` 함수의 `psycopg2.connect()` 부분을 확인하세요.
-데이터베이스 세팅에 맞게 매개변수를 적절히 수정하세요.
+2. Please change the database settings.
+Open the `./web/views.py` file and check the `psycopg2.connect()` part in the `QueryView.post()` function.
+Modify the parameters appropriately according to your database settings.
 
-3. (Optional) migration 하라고 경고가 뜰 수 있기 때문에, 아래 명령어를 이용하여 djgnao migration을 수행합니다.
+3. (Optional) If getting a warning to perform a migration, so use the following command to carry out the Django migration.
 ```bash
 python manage.py migrate
 ```
 
-4. 아래 명령어를 이용하여 서버를 킵니다. 
+4. Use the following command to start the server.
 ```bash
 python manage.py runserver
 ```
 
 
-## 짱쉬운 PostgreSQL 세팅법
+## PostgreSQL Setup
 
-아래 명령어는 docker를 이용해서 PostgreSQL 서버를 실행합니다.
-현재 `./web/views.py`에 있는 PostgreSQL 세팅은 아래 명령어를 이용하여 실행했을 때 수정 없이 사용할 수 있습니다.
+The following command uses Docker to run a PostgreSQL server.
+The PostgreSQL settings in `./web/views.py` can be used without modification when executed with the command below.
 ```bash
 docker run --name some-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
 ```
