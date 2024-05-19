@@ -52,7 +52,7 @@ def read_and_clear_log():
 def parse_path_with_state_machine(logs: list, cur: int):
     """
     state list:
-    PathHeader, PathKeys, PathJoin, PathMJoin, PathOuter, PathInner
+    PathHeader, PathSeqScan, PathIdxScan, PathKeys, PathJoin, PathMJoin, PathOuter, PathInner
     PathWait, PathWait2
     PathDone
     """
@@ -67,30 +67,102 @@ def parse_path_with_state_machine(logs: list, cur: int):
 
         if state == 'PathHeader':
             _PATHHEADER_EXP = r'\ *(\w*)\((.*)\) required_outer \((\w*)\) rows=(\d*) cost=(\d*\.\d*)\.\.(\d*\.\d*)'
-            _PATHHEADER_EXP_NOPARAM = r'\ *(\w*)\((.*)\) rows=(\d*) cost=(\d*\.\d*)\.\.(\d*\.\d*)'
-
+            _PATHHEADER_EXP_NOPARAM = r'\ *(\w*)\((.*)\) rows=(\d*) cost=(\d*\.\d*)\.\.(\d*\.\d*)'           
             # get the header that is must be in the logs
             header = re.match(_PATHHEADER_EXP, line)
             node, relid, ro_relid, rows, startup_cost, total_cost = None, None, None, None, None, None
             if header:
                 node, relid, ro_relid, rows, startup_cost, total_cost = header.groups()
-            else:
-                header = re.match(_PATHHEADER_EXP_NOPARAM, line)
-                assert(header)
+            elif header := re.match(_PATHHEADER_EXP_NOPARAM, line):
                 node, relid, rows, startup_cost, total_cost = header.groups()
-
-            path_buffer['node'] = node
-            path_buffer['relid'] = relid
+            if node: 
+                path_buffer['node'] = node
+            if relid:
+                path_buffer['relid'] = relid
             if ro_relid:
                 path_buffer['ro_relid'] = ro_relid
-            path_buffer['rows'] = int(rows)
-            path_buffer['startup_cost'] = float(startup_cost)
-            path_buffer['total_cost'] = float(total_cost)
+            if rows:
+                path_buffer['rows'] = int(rows)
+            if startup_cost:
+                path_buffer['startup_cost'] = float(startup_cost)
+            if total_cost:
+                path_buffer['total_cost'] = float(total_cost)
 
+            if node == 'SeqScan':
+                state = 'PathSeqScan'
+            elif node == 'IdxScan':
+                state = 'PathIndexScan'
+            elif node == 'BitmapHeapScan':
+                state = 'PathBitmapHeapScan'
+            elif node == 'GatherMerge':
+                state = 'PathGatherMerge'
+            else:
+                state = 'PathWait'
+            cur += 1
 
+        elif state == 'PathSeqScan':
+            _SEQSCAN_COST_EXP = r'\ *run cost: cpu=(\d*\.\d*) disk=(\d*\.\d*) tuples:(\d+) cpu_per_tuple:(\d+\.\d+) pages:(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) target_per_tuple=(\d+\.\d+)'
+            seqscan_cost = re.match(_SEQSCAN_COST_EXP, line)
+            if seqscan_cost:
+                cpu_run_cost, disk_run_cost, tuples, cpu_per_tuple, pages, spc_seq_page_cost, target_per_tuple = seqscan_cost.groups()
+                path_buffer['cpu_run_cost'] = float(cpu_run_cost)
+                path_buffer['disk_run_cost'] = float(disk_run_cost)
+                path_buffer['tuples'] = int(tuples)
+                path_buffer['cpu_per_tuple'] = float(cpu_per_tuple)
+                path_buffer['pages'] = float(pages)
+                path_buffer['spc_seq_page_cost'] = float(spc_seq_page_cost)
+                path_buffer['target_per_tuple'] = float(target_per_tuple)
             state = 'PathWait'
             cur += 1
 
+        elif state == 'PathIndexScan':
+            _INDEX_COSTS_EXP = r'\ *selectivity=(\d+\.\d+) tuples_fetched=(\d+) index_startup_cost=(\d+\.\d+) index_total_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) min_IO_cost=(\d+\.\d+) max_IO_cost=(\d+\.\d+) index_correlation=(\d+\.\d+) pages_fetched=(\d+) c\^2=(\d+\.\d+)'
+            index_costs = re.match(_INDEX_COSTS_EXP, line)
+            if index_costs:
+                selectivity, tuples_fetched, indexstartupcost, indextotalcost, cpu_per_tuple, min_IO_cost, max_IO_cost, indexcorrelation, pages_fetched, csquared = index_costs.groups()
+                path_buffer['selectivity'] = float(selectivity)
+                path_buffer['tuples_fetched'] = float(tuples_fetched)
+                path_buffer['indexstartupcost'] = float(indexstartupcost)
+                path_buffer['indextotalcost'] = float(indextotalcost)
+                path_buffer['cpu_per_tuple'] = float(cpu_per_tuple)
+                path_buffer['min_IO_cost'] = float(min_IO_cost)
+                path_buffer['max_IO_cost'] = float(max_IO_cost)
+                path_buffer['indexcorrelation'] = float(indexcorrelation)
+                path_buffer['pages_fetched'] = float(pages_fetched)
+                path_buffer['csquared'] = float(csquared)
+            state = 'PathWait'
+            cur += 1
+        
+        elif state == 'PathBitmapHeapScan':
+            _BITMAPHEAPSCAN_COST_EXP = r'\ *cpu_run_cost=(\d+\.\d+) tuples=(\d+), cpu_per_tuple=(\d+\.\d+) target_per_tuple=(\d+\.\d+) pages=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) spc_random_page_cost=(\d+\.\d+) T=(\d+\.\d+) index_total_cost=(\d+\.\d+) cost_per_page=(\d+\.\d+)'
+            bitmapheapscan_cost = re.match(_BITMAPHEAPSCAN_COST_EXP, line)
+            if bitmapheapscan_cost:
+                cpu_run_cost, tuples, cpu_per_tuple, target_per_tuple, pages, spc_seq_page_cost, spc_random_page_cost, T, index_total_cost, cost_per_page = bitmapheapscan_cost.groups()
+                path_buffer['cpu_run_cost'] = float(cpu_run_cost)
+                path_buffer['tuples'] = int(tuples)
+                path_buffer['cpu_per_tuple'] = float(cpu_per_tuple)
+                path_buffer['target_per_tuple'] = float(target_per_tuple)
+                path_buffer['pages'] = float(pages)
+                path_buffer['spc_seq_page_cost'] = float(spc_seq_page_cost)
+                path_buffer['spc_random_page_cost'] = float(spc_random_page_cost)
+                path_buffer['T'] = float(T)
+                path_buffer['index_total_cost'] = float(index_total_cost)
+                path_buffer['cost_per_page'] = float(cost_per_page)
+            state = 'PathWait'
+            cur += 1
+            
+        elif state == 'PathGatherMerge':
+            _GATHERMERGE_COST_EXP = r'\ *comparison cost=(\d+\.\d+) cpu operator cost=(\d+\.\d+) N=(\d+\.\d+) input startup cost=(\d+\.\d+)'
+            gathermerge_cost = re.match(_GATHERMERGE_COST_EXP, line)
+            if gathermerge_cost:
+                comparison_cost, cpu_operator_cost, N, input_startup_cost = gathermerge_cost.groups()
+                path_buffer['comparison_cost'] = float(comparison_cost)
+                path_buffer['cpu_operator_cost'] = float(cpu_operator_cost)
+                path_buffer['N'] = int(N)
+                path_buffer['input_startup_cost'] = float(input_startup_cost)
+            state = 'PathWait'
+            cur += 1
+        
         elif state == 'PathWait':
             # a temp state to decide if it is PathKeys, PathJoin, or PathMJoin
             _PATHKEYS_EXP = r'\ *pathkeys:\ (.*)'
@@ -503,6 +575,23 @@ def get_geqo_data(log_lines: list) -> dict:
     data['reloptinfo'] = parse_geqo_path(log_lines)
     return data
 
+def split_log_lines(log_lines):
+    _MARK = '[VPQO] split line'
+    ret, for_items = [], []
+    last = 0
+    for idx, line in enumerate(log_lines):
+        if _MARK not in line:
+            continue
+
+        ret.append(log_lines[last:idx])
+        last = idx
+
+        raw = line.split("RELOPTINFO")[1]
+        relids = raw[raw.find("(")+1:raw.find(")")]
+        for_items.append(relids)
+
+    return ret, for_items
+
 def process_log(log_lines):
     ret = {
         'type': 'dp',
@@ -530,13 +619,13 @@ def process_log(log_lines):
             dp, _cur = get_dp_path(log_lines, cur)
             ret['dp'].append(dp)
             cur = _cur - 1
-
+    
         cur += 1
 
     # second pass for GEQO
     if ret['type'] == 'geqo':
         ret['geqo'] = get_geqo_data(log_lines)
-
+    
     return ret
 
 def try_explain_analyze(in_query: str) -> str:
@@ -560,15 +649,13 @@ class QueryView(APIView):
         q = request.data.get('query', 'EXPLAIN SELECT \'Hello World\'')
         d = request.data.get('db', 'postgres')
         q = try_explain_analyze(q)
-        d = request.data.get('db', 'postgres')
-        q = try_explain_analyze(q)
 
         # Additional query to get server statistics
         _PG_CLASS_QUERY = 'SELECT relname, relpages, reltuples FROM pg_class;'
         
         # get query results
         try:
-            conn = psycopg2.connect("host=localhost dbname={} user=postgres".format(d))    # Connect to your postgres DB
+            conn = psycopg2.connect("host=localhost dbname={} user=postgres password=dbs402418".format(d))    # Connect to your postgres DB
             cur = conn.cursor()         # Open a cursor to perform database operations
 
             clear_previous_log()
@@ -601,6 +688,3 @@ class QueryView(APIView):
         except psycopg2.ProgrammingError as e:
             print(e)
             return Response({'error': str(e)})
-
-
-
