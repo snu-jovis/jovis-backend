@@ -155,85 +155,67 @@ def parse_path_with_state_machine(logs: list, cur: int):
                         'input_startup_cost': float(input_startup_cost)
                     })
             elif path_buffer['node'] == 'NestLoop':
-                _NESTLOOP_DETAILS_EXP = r'\ *details: inner_rescan_start_cost=(\d+\.\d+) inner_rescan_total_cost=(\d+\.\d+) inner_run_cost=(\d+\.\d+) inner_rescan_run_cost=(\d+\.\d+) outer_path_rows=(\d+\.\d+) inner_run_cost=(\d+\.\d+) inner_rescan_run_cost=(\d+\.\d+) outer_matched_rows=(\d+\.\d+) outer_unmatched_rows=(\d+\.\d+) inner_scan_frac=(\d+\.\d+) ntuples=(\d+\.\d+)'
+                _NESTLOOP_DETAILS_EXP = r'\ *details: initial_startup_cost=(\d+\.\d+) initial_run_cost=(\d+\.\d+) inner_run_cost=(\d+\.\d+) inner_rescan_run_cost=(\d+\.\d+) inner_rescan_start_cost=(\d+\.\d+) inner_path_startup=(\d+\.\d+) outer_rows=(\d+\.\d+) outer_path_startup=(\d+\.\d+) outer_path_run=(\d+\.\d+)'
                 details = re.match(_NESTLOOP_DETAILS_EXP, line)
                 if details:
-                    inner_rescan_start_cost, inner_rescan_total_cost, inner_run_cost, inner_rescan_run_cost, outer_path_rows, inner_run_cost, inner_rescan_run_cost, outer_matched_rows, outer_unmatched_rows, inner_scan_frac, ntuples = details.groups()
+                    initial_startup_cost, initial_run_cost, inner_run_cost, inner_rescan_run_cost, inner_rescan_start_cost, inner_path_startup, outer_rows, outer_path_startup, outer_path_run = details.groups()
                     path_buffer.update({
-                        'inner_rescan_start_cost': float(inner_rescan_start_cost),
-                        'inner_rescan_total_cost': float(inner_rescan_total_cost),
+                        'initial_startup_cost': float(initial_startup_cost),
+                        'initial_run_cost': float(initial_run_cost),
                         'inner_run_cost': float(inner_run_cost),
                         'inner_rescan_run_cost': float(inner_rescan_run_cost),
-                        'outer_path_rows': float(outer_path_rows),
-                        'outer_matched_rows': float(outer_matched_rows),
-                        'outer_unmatched_rows': float(outer_unmatched_rows),
-                        'inner_scan_frac': float(inner_scan_frac),
-                        'ntuples': float(ntuples)
+                        'inner_rescan_start_cost': float(inner_rescan_start_cost),
+                        'inner_path_startup': float(inner_path_startup),
+                        'outer_rows': float(outer_rows),
+                        'outer_path_startup': float(outer_path_startup),
+                        'outer_path_run': float(outer_path_run)
                     })
             elif path_buffer['node'] == 'MergeJoin':
-                _MERGEJOIN_DETAILS_EXP = r'\ *details: sortouter=(\d) sortinner=(\d) materializeinner=(\d) merge_outer_path_rows=(\d+\.\d+) merge_inner_path_rows=(\d+\.\d+) merge_outer_rows=(\d+\.\d+) merge_inner_rows=(\d+\.\d+) merge_outer_skip_rows=(\d+\.\d+) merge_inner_skip_rows=(\d+\.\d+) merge_outer_start_sel=(\d+\.\d+) merge_outer_end_sel=(\d+\.\d+) merge_inner_start_sel=(\d+\.\d+) merge_inner_end_sel=(\d+\.\d+) merge_inner_run_cost=(\d+\.\d+) inner_path_rows=(\d+\.\d+) outer_rows=(\d+\.\d+) inner_rows=(\d+\.\d+) outer_skip_rows=(\d+\.\d+) inner_skip_rows=(\d+\.\d+) inner_run_cost=(\d+\.\d+) bare_inner_cost=(\d+\.\d+) mat_inner_cost=(\d+\.\d+) mergejointuples=(\d+\.\d+) rescannedtuples=(\d+\.\d+) rescanratio=(\d+\.\d+)'
+                _MERGEJOIN_DETAILS_EXP = r'\ *details: sortouter=(\d+) sortinner=(\d+) materializeinner=(\d+) initial_run_cost=(\d+\.\d+) initial_startup_cost=(\d+\.\d+) inner_run_cost=(\d+\.\d+) inner_scan_cost=(\d+\.\d+) inner_startup_cost=(\d+\.\d+) outer_scan_cost=(\d+\.\d+) outer_startup_cost=(\d+\.\d+) outerendsel=(\d+\.\d+) outerstartsel=(\d+\.\d+) innerendsel=(\d+\.\d+) innerstartsel=(\d+\.\d+) outer_rows=(\d+\.\d+) inner_rows=(\d+\.\d+) outer_skip_rows=(\d+\.\d+) inner_skip_rows=(\d+\.\d+)'
                 details = re.match(_MERGEJOIN_DETAILS_EXP, line)
                 if details:
-                    sortouter, sortinner, materializeinner, merge_outer_path_rows, merge_inner_path_rows, merge_outer_rows, merge_inner_rows, merge_outer_skip_rows, merge_inner_skip_rows, merge_outer_start_sel, merge_outer_end_sel, merge_inner_start_sel, merge_inner_end_sel, merge_inner_run_cost, inner_path_rows, outer_rows, inner_rows, outer_skip_rows, inner_skip_rows, inner_run_cost, bare_inner_cost, mat_inner_cost, mergejointuples, rescannedtuples, rescanratio = details.groups()
+                    sortouter, sortinner, materializeinner, initial_run_cost, initial_startup_cost, inner_run_cost, inner_scan_cost, inner_startup_cost, outer_scan_cost, outer_startup_cost, outerendsel, outerstartsel, innerendsel, innerstartsel, outer_rows, inner_rows, outer_skip_rows, inner_skip_rows = details.groups()
                     path_buffer.update({
                         'sortouter': int(sortouter),
                         'sortinner': int(sortinner),
                         'materializeinner': int(materializeinner),
-                        'merge_outer_path_rows': float(merge_outer_path_rows),
-                        'merge_inner_path_rows': float(merge_inner_path_rows),
-                        'merge_outer_rows': float(merge_outer_rows),
-                        'merge_inner_rows': float(merge_inner_rows),
-                        'merge_outer_skip_rows': float(merge_outer_skip_rows),
-                        'merge_inner_skip_rows': float(merge_inner_skip_rows),
-                        'merge_outer_start_sel': float(merge_outer_start_sel),
-                        'merge_outer_end_sel': float(merge_outer_end_sel),
-                        'merge_inner_start_sel': float(merge_inner_start_sel),
-                        'merge_inner_end_sel': float(merge_inner_end_sel),
-                        'merge_inner_run_cost': float(merge_inner_run_cost),
-                        'inner_path_rows': float(inner_path_rows),
+                        'initial_run_cost': float(initial_run_cost),
+                        'initial_startup_cost': float(initial_startup_cost),
+                        'inner_run_cost': float(inner_run_cost),
+                        'inner_scan_cost': float(inner_scan_cost),
+                        'inner_startup_cost': float(inner_startup_cost),
+                        'outer_scan_cost': float(outer_scan_cost),
+                        'outer_startup_cost': float(outer_startup_cost),
+                        'outerendsel': float(outerendsel),
+                        'outerstartsel': float(outerstartsel),
+                        'innerendsel': float(innerendsel),
+                        'innerstartsel': float(innerstartsel),
                         'outer_rows': float(outer_rows),
                         'inner_rows': float(inner_rows),
                         'outer_skip_rows': float(outer_skip_rows),
-                        'inner_skip_rows': float(inner_skip_rows),
-                        'inner_run_cost': float(inner_run_cost),
-                        'bare_inner_cost': float(bare_inner_cost),
-                        'mat_inner_cost': float(mat_inner_cost),
-                        'mergejointuples': float(mergejointuples),
-                        'rescannedtuples': float(rescannedtuples),
-                        'rescanratio': float(rescanratio)
+                        'inner_skip_rows': float(inner_skip_rows)
                     })
             elif path_buffer['node'] == 'HashJoin':
-                _HASHJOIN_DETAILS_EXP = r'\ *details: hashbuild_cost=(\d+\.\d+) hashjoin_cost=(\d+\.\d+) innerbuild_cost=(\d+\.\d+) outerbuild_cost=(\d+\.\d+) hashcpu_cost=(\d+\.\d+) seqpage_cost=(\d+\.\d+) inner_path_rows_total=(\d+\.\d+) numbuckets=(\d+) numbatches=(\d+) innerpages=(\d+) outerpages=(\d+) initial_startup_cost=(\d+\.\d+) initial_run_cost=(\d+\.\d+) num_hashclauses=(\d+) outer_path_rows=(\d+\.\d+) inner_path_rows=(\d+\.\d+) inner_path_rows_total=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) hash_qual_cost.startup=(\d+\.\d+) hash_qual_cost.per_tuple=(\d+\.\d+) qp_qual_cost.startup=(\d+\.\d+) qp_qual_cost.per_tuple=(\d+\.\d+) hashjointuples=(\d+\.\d+) virtualbuckets=(\d+\.\d+) innerbucketsize=(\d+\.\d+) innermcvfreq=(\d+\.\d+)'
+                _HASHJOIN_DETAILS_EXP = r'\s*details:\s*initial_startup_cost=(\d+\.\d+)\s*initial_run_cost=(\d+\.\d+)\s*outer_path_startup=(\d+\.\d+)\s*outer_path_total=(\d+\.\d+)\s*inner_path_startup=(\d+\.\d+)\s*inner_path_total=(\d+\.\d+)\s*cpu_operator_cost=(\d+\.\d+)\s*num_hashclauses=(\d+)\s*cpu_tuple_cost=(\d+\.\d+)\s*inner_path_rows=(\d+\.\d+)\s*hashcpu_cost=(\d+\.\d+)\s*outer_path_rows=(\d+\.\d+)\s*innerpages=(\d+\.\d+)\s*outerpages=(\d+\.\d+)\s*seqpage_cost=(\d+\.\d+)\s*'
                 details = re.match(_HASHJOIN_DETAILS_EXP, line)
                 if details:
-                    hashbuild_cost, hashjoin_cost, innerbuild_cost, outerbuild_cost, hashcpu_cost, seqpage_cost, inner_path_rows_total, numbuckets, numbatches, innerpages, outerpages, initial_startup_cost, initial_run_cost, num_hashclauses, outer_path_rows, inner_path_rows, inner_path_rows_total, cpu_per_tuple, hash_qual_cost_startup, hash_qual_cost_per_tuple, qp_qual_cost_startup, qp_qual_cost_per_tuple, hashjointuples, virtualbuckets, innerbucketsize, innermcvfreq = details.groups()
+                    initial_startup_cost, initial_run_cost, outer_path_startup, outer_path_total, inner_path_startup, inner_path_total, cpu_operator_cost, num_hashclauses, cpu_tuple_cost, inner_path_rows, hashcpu_cost, outer_path_rows, innerpages, outerpages, seqpage_cost = details.groups()
                     path_buffer.update({
-                        'hashbuild_cost': float(hashbuild_cost),
-                        'hashjoin_cost': float(hashjoin_cost),
-                        'innerbuild_cost': float(innerbuild_cost),
-                        'outerbuild_cost': float(outerbuild_cost),
-                        'hashcpu_cost': float(hashcpu_cost),
-                        'seqpage_cost': float(seqpage_cost),
-                        'inner_path_rows_total': float(inner_path_rows_total),
-                        'numbuckets': int(numbuckets),
-                        'numbatches': int(numbatches),
-                        'innerpages': int(innerpages),
-                        'outerpages': int(outerpages),
                         'initial_startup_cost': float(initial_startup_cost),
                         'initial_run_cost': float(initial_run_cost),
+                        'outer_path_startup': float(outer_path_startup),
+                        'outer_path_total': float(outer_path_total),
+                        'inner_path_startup': float(inner_path_startup),
+                        'inner_path_total': float(inner_path_total),
+                        'cpu_operator_cost': float(cpu_operator_cost),
                         'num_hashclauses': int(num_hashclauses),
-                        'outer_path_rows': float(outer_path_rows),
+                        'cpu_tuple_cost': float(cpu_tuple_cost),
                         'inner_path_rows': float(inner_path_rows),
-                        'inner_path_rows_total': float(inner_path_rows_total),
-                        'cpu_per_tuple': float(cpu_per_tuple),
-                        'hash_qual_cost_startup': float(hash_qual_cost_startup),
-                        'hash_qual_cost_per_tuple': float(hash_qual_cost_per_tuple),
-                        'qp_qual_cost_startup': float(qp_qual_cost_startup),
-                        'qp_qual_cost_per_tuple': float(qp_qual_cost_per_tuple),
-                        'hashjointuples': float(hashjointuples),
-                        'virtualbuckets': float(virtualbuckets),
-                        'innerbucketsize': float(innerbucketsize),
-                        'innermcvfreq': float(innermcvfreq)
+                        'hashcpu_cost': float(hashcpu_cost),
+                        'outer_path_rows': float(outer_path_rows),
+                        'innerpages': float(innerpages),
+                        'outerpages': float(outerpages),
+                        'seqpage_cost': float(seqpage_cost)
                     })
 
             state = 'PathWait'
