@@ -86,13 +86,9 @@ CORS_ALLOWED_ORIGINS = [
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
 DATABASES = {
- 'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'queryplans',
-        'USER': 'postgres',
-        'PASSWORD': 'dbs402418',
-        'HOST': 'localhost',
-        'PORT': '5433',
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
 
@@ -140,8 +136,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 # Query Plan Optimization Visualization
-PG_LOG_FILE = ''
-PG_LOG_BACKUP_DIR = ''        # should be made before run
+PG_LOG_FILE = '/var/lib/postgresql/logfile'
+PG_LOG_BACKUP_DIR = '/var/lib/postgresql/backup'        # should be made before run
 
 if PG_LOG_FILE == '' or PG_LOG_BACKUP_DIR == '':
     print('Please set PG_LOG_FILE or PG_LOG_BACKUP_DIR before start!!!! You can see these in `backend/settings.py`')

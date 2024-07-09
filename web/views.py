@@ -2,9 +2,6 @@ import psycopg2
 import os
 import time
 import re
-import os
-import time
-import re
 
 from django.shortcuts import render
 
@@ -52,7 +49,7 @@ def read_and_clear_log():
 def parse_path_with_state_machine(logs: list, cur: int):
     """
     state list:
-    PathHeader, PathSeqScan, PathIdxScan, PathKeys, PathJoin, PathMJoin, PathOuter, PathInner
+    PathHeader, PathKeys, PathJoin, PathMJoin, PathOuter, PathInner
     PathWait, PathWait2
     PathDone
     """
@@ -67,170 +64,42 @@ def parse_path_with_state_machine(logs: list, cur: int):
 
         if state == 'PathHeader':
             _PATHHEADER_EXP = r'\ *(\w*)\((.*)\) required_outer \((\w*)\) rows=(\d*) cost=(\d*\.\d*)\.\.(\d*\.\d*)'
-            _PATHHEADER_EXP_NOPARAM = r'\ *(\w*)\((.*)\) rows=(\d*) cost=(\d*\.\d*)\.\.(\d*\.\d*)'           
+            _PATHHEADER_EXP_NOPARAM = r'\ *(\w*)\((.*)\) rows=(\d*) cost=(\d*\.\d*)\.\.(\d*\.\d*)'
+
             # get the header that is must be in the logs
             header = re.match(_PATHHEADER_EXP, line)
             node, relid, ro_relid, rows, startup_cost, total_cost = None, None, None, None, None, None
             if header:
                 node, relid, ro_relid, rows, startup_cost, total_cost = header.groups()
-            elif header := re.match(_PATHHEADER_EXP_NOPARAM, line):
+            else:
+                header = re.match(_PATHHEADER_EXP_NOPARAM, line)
+                assert(header)
                 node, relid, rows, startup_cost, total_cost = header.groups()
-            if node: 
-                path_buffer['node'] = node
-            if relid:
-                path_buffer['relid'] = relid
+
+            path_buffer['node'] = node
+            path_buffer['relid'] = relid
             if ro_relid:
                 path_buffer['ro_relid'] = ro_relid
-            if rows:
-                path_buffer['rows'] = int(rows)
-            if startup_cost:
-                path_buffer['startup_cost'] = float(startup_cost)
-            if total_cost:
-                path_buffer['total_cost'] = float(total_cost)
-
-            if node in ['SeqScan', 'IdxScan', 'GatherMerge', 'BitmapHeapScan', 'HashJoin', 'MergeJoin', 'NestLoop']:
-                state = 'PathDetail'
-            else:
-                state = 'PathWait'
-            cur += 1
-
-        elif state == 'PathDetail':
-            if path_buffer['node'] == 'SeqScan':
-                _SEQSCAN_DETAILS_EXP = r'\ *details: cpu_run_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) tuples=(\d+) cpu_per_tuple=(\d+\.\d+) pages=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) target_per_tuple=(\d+\.\d+)'
-                details = re.match(_SEQSCAN_DETAILS_EXP, line)
-                if details:
-                    cpu_run_cost, disk_run_cost, tuples, cpu_per_tuple, pages, spc_seq_page_cost, target_per_tuple = details.groups()
-                    path_buffer.update({
-                        'cpu_run_cost': float(cpu_run_cost),
-                        'disk_run_cost': float(disk_run_cost),
-                        'tuples': int(tuples),
-                        'cpu_per_tuple': float(cpu_per_tuple),
-                        'pages': float(pages),
-                        'spc_seq_page_cost': float(spc_seq_page_cost),
-                        'target_per_tuple': float(target_per_tuple)
-                    })
-            elif path_buffer['node'] == 'BitmapHeapScan':
-                _BITMAPHEAPSCAN_DETAILS_EXP = r'\ *details: cpu_run_cost=(\d+\.\d+) tuples=(\d+) cpu_per_tuple=(\d+\.\d+) target_per_tuple=(\d+\.\d+) pages=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) spc_random_page_cost=(\d+\.\d+) T=(\d+\.\d+) index_total_cost=(\d+\.\d+) cost_per_page=(\d+\.\d+)'
-                details = re.match(_BITMAPHEAPSCAN_DETAILS_EXP, line)
-                if details:
-                    cpu_run_cost, tuples, cpu_per_tuple, target_per_tuple, pages, spc_seq_page_cost, spc_random_page_cost, T, index_total_cost, cost_per_page = details.groups()
-                    path_buffer.update({
-                        'cpu_run_cost': float(cpu_run_cost),
-                        'tuples': int(tuples),
-                        'cpu_per_tuple': float(cpu_per_tuple),
-                        'target_per_tuple': float(target_per_tuple),
-                        'pages': float(pages),
-                        'spc_seq_page_cost': float(spc_seq_page_cost),
-                        'spc_random_page_cost': float(spc_random_page_cost),
-                        'T': float(T),
-                        'index_total_cost': float(index_total_cost),
-                        'cost_per_page': float(cost_per_page)
-                    })
-            elif path_buffer['node'] == 'IdxScan':
-                _IDXSCAN_DETAILS_EXP = r'\ *details: selectivity=(\d+\.\d+) tuples_fetched=(\d+) index_startup_cost=(\d+\.\d+) index_total_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) min_IO_cost=(\d+\.\d+) max_IO_cost=(\d+\.\d+) index_correlation=(\d+\.\d+) pages_fetched=(\d+) c\^2=(\d+\.\d+)'
-                details = re.match(_IDXSCAN_DETAILS_EXP, line)
-                if details:
-                    selectivity, tuples_fetched, index_startup_cost, index_total_cost, cpu_per_tuple, min_IO_cost, max_IO_cost, index_correlation, pages_fetched, csquared = details.groups()
-                    path_buffer.update({
-                        'selectivity': float(selectivity),
-                        'tuples_fetched': int(tuples_fetched),
-                        'index_startup_cost': float(index_startup_cost),
-                        'index_total_cost': float(index_total_cost),
-                        'cpu_per_tuple': float(cpu_per_tuple),
-                        'min_IO_cost': float(min_IO_cost),
-                        'max_IO_cost': float(max_IO_cost),
-                        'index_correlation': float(index_correlation),
-                        'pages_fetched': int(pages_fetched),
-                        'csquared': float(csquared)
-                    })
-            elif path_buffer['node'] == 'GatherMerge':
-                _GATHERMERGE_DETAILS_EXP = r'\ *details: comparison_cost=(\d+\.\d+) cpu_operator_cost=(\d+\.\d+) N=(\d+) input_startup_cost=(\d+\.\d+)'
-                details = re.match(_GATHERMERGE_DETAILS_EXP, line)
-                if details:
-                    comparison_cost, cpu_operator_cost, N, input_startup_cost = details.groups()
-                    path_buffer.update({
-                        'comparison_cost': float(comparison_cost),
-                        'cpu_operator_cost': float(cpu_operator_cost),
-                        'N': int(N),
-                        'input_startup_cost': float(input_startup_cost)
-                    })
-            elif path_buffer['node'] == 'NestLoop':
-                _NESTLOOP_DETAILS_EXP = r'\ *details: initial_startup_cost=(\d+\.\d+) initial_run_cost=(\d+\.\d+) inner_run_cost=(\d+\.\d+) inner_rescan_run_cost=(\d+\.\d+) inner_rescan_start_cost=(\d+\.\d+) inner_path_startup=(\d+\.\d+) outer_rows=(\d+\.\d+) outer_path_startup=(\d+\.\d+) outer_path_run=(\d+\.\d+)'
-                details = re.match(_NESTLOOP_DETAILS_EXP, line)
-                if details:
-                    initial_startup_cost, initial_run_cost, inner_run_cost, inner_rescan_run_cost, inner_rescan_start_cost, inner_path_startup, outer_rows, outer_path_startup, outer_path_run = details.groups()
-                    path_buffer.update({
-                        'initial_startup_cost': float(initial_startup_cost),
-                        'initial_run_cost': float(initial_run_cost),
-                        'inner_run_cost': float(inner_run_cost),
-                        'inner_rescan_run_cost': float(inner_rescan_run_cost),
-                        'inner_rescan_start_cost': float(inner_rescan_start_cost),
-                        'inner_path_startup': float(inner_path_startup),
-                        'outer_rows': float(outer_rows),
-                        'outer_path_startup': float(outer_path_startup),
-                        'outer_path_run': float(outer_path_run)
-                    })
-            elif path_buffer['node'] == 'MergeJoin':
-                _MERGEJOIN_DETAILS_EXP = r'\ *details: sortouter=(\d+) sortinner=(\d+) materializeinner=(\d+) initial_run_cost=(\d+\.\d+) initial_startup_cost=(\d+\.\d+) inner_run_cost=(\d+\.\d+) inner_scan_cost=(\d+\.\d+) inner_startup_cost=(\d+\.\d+) outer_scan_cost=(\d+\.\d+) outer_startup_cost=(\d+\.\d+) outerendsel=(\d+\.\d+) outerstartsel=(\d+\.\d+) innerendsel=(\d+\.\d+) innerstartsel=(\d+\.\d+) outer_rows=(\d+\.\d+) inner_rows=(\d+\.\d+) outer_skip_rows=(\d+\.\d+) inner_skip_rows=(\d+\.\d+)'
-                details = re.match(_MERGEJOIN_DETAILS_EXP, line)
-                if details:
-                    sortouter, sortinner, materializeinner, initial_run_cost, initial_startup_cost, inner_run_cost, inner_scan_cost, inner_startup_cost, outer_scan_cost, outer_startup_cost, outerendsel, outerstartsel, innerendsel, innerstartsel, outer_rows, inner_rows, outer_skip_rows, inner_skip_rows = details.groups()
-                    path_buffer.update({
-                        'sortouter': int(sortouter),
-                        'sortinner': int(sortinner),
-                        'materializeinner': int(materializeinner),
-                        'initial_run_cost': float(initial_run_cost),
-                        'initial_startup_cost': float(initial_startup_cost),
-                        'inner_run_cost': float(inner_run_cost),
-                        'inner_scan_cost': float(inner_scan_cost),
-                        'inner_startup_cost': float(inner_startup_cost),
-                        'outer_scan_cost': float(outer_scan_cost),
-                        'outer_startup_cost': float(outer_startup_cost),
-                        'outerendsel': float(outerendsel),
-                        'outerstartsel': float(outerstartsel),
-                        'innerendsel': float(innerendsel),
-                        'innerstartsel': float(innerstartsel),
-                        'outer_rows': float(outer_rows),
-                        'inner_rows': float(inner_rows),
-                        'outer_skip_rows': float(outer_skip_rows),
-                        'inner_skip_rows': float(inner_skip_rows)
-                    })
-            elif path_buffer['node'] == 'HashJoin':
-                _HASHJOIN_DETAILS_EXP = r'\s*details:\s*initial_startup_cost=(\d+\.\d+)\s*initial_run_cost=(\d+\.\d+)\s*outer_path_startup=(\d+\.\d+)\s*outer_path_total=(\d+\.\d+)\s*inner_path_startup=(\d+\.\d+)\s*inner_path_total=(\d+\.\d+)\s*cpu_operator_cost=(\d+\.\d+)\s*num_hashclauses=(\d+)\s*cpu_tuple_cost=(\d+\.\d+)\s*inner_path_rows=(\d+\.\d+)\s*hashcpu_cost=(\d+\.\d+)\s*outer_path_rows=(\d+\.\d+)\s*innerpages=(\d+\.\d+)\s*outerpages=(\d+\.\d+)\s*seqpage_cost=(\d+\.\d+)\s*'
-                details = re.match(_HASHJOIN_DETAILS_EXP, line)
-                if details:
-                    initial_startup_cost, initial_run_cost, outer_path_startup, outer_path_total, inner_path_startup, inner_path_total, cpu_operator_cost, num_hashclauses, cpu_tuple_cost, inner_path_rows, hashcpu_cost, outer_path_rows, innerpages, outerpages, seqpage_cost = details.groups()
-                    path_buffer.update({
-                        'initial_startup_cost': float(initial_startup_cost),
-                        'initial_run_cost': float(initial_run_cost),
-                        'outer_path_startup': float(outer_path_startup),
-                        'outer_path_total': float(outer_path_total),
-                        'inner_path_startup': float(inner_path_startup),
-                        'inner_path_total': float(inner_path_total),
-                        'cpu_operator_cost': float(cpu_operator_cost),
-                        'num_hashclauses': int(num_hashclauses),
-                        'cpu_tuple_cost': float(cpu_tuple_cost),
-                        'inner_path_rows': float(inner_path_rows),
-                        'hashcpu_cost': float(hashcpu_cost),
-                        'outer_path_rows': float(outer_path_rows),
-                        'innerpages': float(innerpages),
-                        'outerpages': float(outerpages),
-                        'seqpage_cost': float(seqpage_cost)
-                    })
-
+            path_buffer['rows'] = int(rows)
+            path_buffer['startup_cost'] = float(startup_cost)
+            path_buffer['total_cost'] = float(total_cost)
+          
             state = 'PathWait'
             cur += 1
-        
+
         elif state == 'PathWait':
             # a temp state to decide if it is PathKeys, PathJoin, or PathMJoin
             _PATHKEYS_EXP = r'\ *pathkeys:\ (.*)'
             _CLAUSES_EXP = r'\ *clauses:(.*)'
+            _COSTKEYS_EXP = r'\ *details:\ (.*)'
             #_MERGEJOIN_INFO_EXP = r'\ *sortouter=(\d) sortinner=(\d) materializeinner=(\d)'
 
             if re.match(_PATHKEYS_EXP, line):
                 state = 'PathKeys'
             elif re.match(_CLAUSES_EXP, line):
                 state = 'PathJoin'
+            elif re.match(_COSTKEYS_EXP, line):
+                state = 'PathCost'
             #elif re.match(_MERGEJOIN_INFO_EXP, line):
             #    state = 'PathMJoin'
             else:
@@ -252,6 +121,17 @@ def parse_path_with_state_machine(logs: list, cur: int):
 
             state = 'PathWait'
             cur += 1
+            
+        elif state == 'PathCost':
+            if(path_buffer['node'] == 'SeqScan'):
+                parse_seq_scan(line, path_buffer)
+            elif(path_buffer['node'] == 'IdxScan'):
+                parse_idx_scan(line, path_buffer)
+            elif(path_buffer['node'] == 'BitmapHeapScan'):
+                parse_bitmap_heap_scan(line, path_buffer)
+                
+            state = 'PathWait'
+            cur += 1
 
         elif state == 'PathJoin':
             _CLAUSES_EXP = r'\ *clauses:(.*)'
@@ -262,8 +142,32 @@ def parse_path_with_state_machine(logs: list, cur: int):
                 'clauses': clauses.groups()[0].strip()
             }
 
+            state = 'PathWait2'
+            cur += 1
+
+        elif state == 'PathMJoin':
+            _MERGEJOIN_INFO_EXP = r'\ *sortouter=(\d) sortinner=(\d) materializeinner=(\d)'
+            mj_info = re.match(_MERGEJOIN_INFO_EXP, line)
+            assert(mj_info)
+
+            outerkeys_exist, innerkeys_exist, m_inner_exist = mj_info.groups()
+            path_buffer['join']['mergejoin_info'] = {
+                'outerkeys_exist': outerkeys_exist,
+                'innerkeys_exist': innerkeys_exist,
+                'm_inner_exist': m_inner_exist
+            }
+
             state = 'PathOuter'
             cur += 1
+
+        elif state == 'PathWait2':
+            # a temp state to decide the new line is for MJoin or outer path
+            _MERGEJOIN_INFO_EXP = r'\ *sortouter=(\d) sortinner=(\d) materializeinner=(\d)'
+
+            if re.match(_MERGEJOIN_INFO_EXP, line):
+                state = 'PathMJoin'
+            else:
+                state = 'PathOuter'
 
         elif state == 'PathOuter':
             outer, _cur = parse_path_with_state_machine(logs, cur)
@@ -429,6 +333,69 @@ def get_dp_path(log_lines: list, cur: int):
     _START_SIGN = '[VPQO][DP] standard_join_search started'
     _END_SIGN = '[VPQO][DP] standard_join_search done'
     return parse_with_state_machine(log_lines, cur, _START_SIGN, _END_SIGN)
+
+def parse_seq_scan(line: str, buffer: dict):
+    _SEQSCAN_DETAILS_EXP = r'\ *details: cpu_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) baserel_tuples=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) baserel_pages=(\d+)'
+    details = re.match(_SEQSCAN_DETAILS_EXP, line)
+    
+    if details:
+        cpu_run_cost, cpu_per_tuple, baserel_tuples, pathtarget_cost, \
+            disk_run_cost, spc_seq_page_cost, baserel_pages = details.groups()
+        
+        buffer.update({
+            'cpu_run_cost': float(cpu_run_cost),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'baserel_tuples': float(baserel_tuples),
+            'pathtarget_cost': float(pathtarget_cost),
+            'disk_run_cost': float(disk_run_cost),
+            'spc_seq_page_cost': float(spc_seq_page_cost),
+            'baserel_pages': float(baserel_pages)
+        })
+        
+def parse_idx_scan(line: str, buffer: dict):
+    _IDXSCAN_DETAILS_EXP = r'\ *details: loop_count=(\d+\.\d+) index_scan_cost=(\d+\.\d+) index_correlation=(\d+\.\d+) index_selectivity=(\d+\.\d+) cpu_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) tuples_fetched=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) max_io_cost=(\d+\.\d+) min_io_cost=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) spc_random_page_cost=(\d+\.\d+) baserel_pages=(\d+) pages_fetched=(\d+\.\d+)'
+    details = re.match(_IDXSCAN_DETAILS_EXP, line)
+    
+    if details:
+        loop_count, index_scan_cost, index_correlation, index_selectivity, \
+            cpu_run_cost, cpu_per_tuple, tuples_fetched, pathtarget_cost, \
+                disk_run_cost, max_io_cost, min_io_cost, \
+                    spc_seq_page_cost, spc_random_page_cost, baserel_pages, pages_fetched = details.groups()
+        
+        buffer.update({
+            'loop_count': float(loop_count),
+            'index_scan_cost': float(index_scan_cost),
+            'index_correlation': float(index_correlation),
+            'index_selectivity': float(index_selectivity),
+            'cpu_run_cost': float(cpu_run_cost),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'tuples_fetched': float(tuples_fetched),
+            'pathtarget_cost': float(pathtarget_cost),
+            'disk_run_cost': float(disk_run_cost),
+            'max_io_cost': float(max_io_cost),
+            'min_io_cost': float(min_io_cost),
+            'spc_seq_page_cost': float(spc_seq_page_cost),
+            'spc_random_page_cost': float(spc_random_page_cost),
+            'baserel_pages': float(baserel_pages),
+            'pages_fetched': float(pages_fetched)
+        })
+        
+def parse_bitmap_heap_scan(line: str, buffer: dict):
+    _SEQSCAN_DETAILS_EXP = r'\ *details: cpu_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) tuples_fetched=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) pages_fetched=(\d+\.\d+) cost_per_page=(\d+\.\d+)'
+    details = re.match(_SEQSCAN_DETAILS_EXP, line)
+    
+    if details:
+        cpu_run_cost, cpu_per_tuple, tuples_fetched, pathtarget_cost, \
+            pages_fetched, cost_per_page = details.groups()
+        
+        buffer.update({
+            'cpu_run_cost': float(cpu_run_cost),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'tuples_fetched': float(tuples_fetched),
+            'pathtarget_cost': float(pathtarget_cost),
+            'pages_fetched': float(pages_fetched),
+            'cost_per_page': float(cost_per_page)
+        })
 
 def parse_geqo_with_state_machine(logs: list):
     """
@@ -653,13 +620,13 @@ def process_log(log_lines):
             dp, _cur = get_dp_path(log_lines, cur)
             ret['dp'].append(dp)
             cur = _cur - 1
-    
+
         cur += 1
 
     # second pass for GEQO
     if ret['type'] == 'geqo':
         ret['geqo'] = get_geqo_data(log_lines)
-    
+
     return ret
 
 def try_explain_analyze(in_query: str) -> str:
@@ -689,7 +656,7 @@ class QueryView(APIView):
         
         # get query results
         try:
-            conn = psycopg2.connect("host=localhost dbname={} user=postgres password=dbs402418".format(d))    # Connect to your postgres DB
+            conn = psycopg2.connect("host=localhost dbname={} user=postgres".format(d))    # Connect to your postgres DB
             cur = conn.cursor()         # Open a cursor to perform database operations
 
             clear_previous_log()
