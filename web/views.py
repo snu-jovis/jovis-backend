@@ -335,12 +335,13 @@ def get_dp_path(log_lines: list, cur: int):
     return parse_with_state_machine(log_lines, cur, _START_SIGN, _END_SIGN)
 
 def parse_seq_scan(line: str, buffer: dict):
-    _SEQSCAN_DETAILS_EXP = r'\ *details: cpu_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) baserel_tuples=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) baserel_pages=(\d+)'
+    _SEQSCAN_DETAILS_EXP = r'\ *details: cpu_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) baserel_tuples=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) baserel_pages=(\d+) parallel_workers=(\d+) parallel_divisor=(\d+\.\d+) qpqual_startup_cost=(\d+\.\d+) pathtarget_startup_cost=(\d+\.\d+)'
     details = re.match(_SEQSCAN_DETAILS_EXP, line)
     
     if details:
         cpu_run_cost, cpu_per_tuple, baserel_tuples, pathtarget_cost, \
-            disk_run_cost, spc_seq_page_cost, baserel_pages = details.groups()
+            disk_run_cost, spc_seq_page_cost, baserel_pages, parallel_workers, \
+                parallel_divisor, qpqual_startup_cost, pathtarget_startup_cost = details.groups()
         
         buffer.update({
             'cpu_run_cost': float(cpu_run_cost),
@@ -349,7 +350,11 @@ def parse_seq_scan(line: str, buffer: dict):
             'pathtarget_cost': float(pathtarget_cost),
             'disk_run_cost': float(disk_run_cost),
             'spc_seq_page_cost': float(spc_seq_page_cost),
-            'baserel_pages': float(baserel_pages)
+            'baserel_pages': float(baserel_pages),
+            'parallel_workers': int(parallel_workers),
+            'parallel_divisor': float(parallel_divisor),
+            'qpqual_startup_cost': float(qpqual_startup_cost),
+            'pathtarget_startup_cost': float(pathtarget_startup_cost)
         })
         
 def parse_idx_scan(line: str, buffer: dict):
