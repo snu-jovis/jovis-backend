@@ -10,6 +10,8 @@ from rest_framework.response import Response
 
 from backend.settings import PG_LOG_FILE, PG_LOG_BACKUP_DIR
 
+DEBUG = True
+
 def clear_previous_log():
     os.system(f"cp {PG_LOG_FILE} {PG_LOG_BACKUP_DIR}/{time.time()}_prev")
     os.system(f"echo '' > {PG_LOG_FILE}")
@@ -18,7 +20,7 @@ def read_and_clear_log():
     filename = f"{PG_LOG_BACKUP_DIR}/{time.time()}_pq"
 
     # TODO: I have no idea why logfile from pg_ctl does not suppress 
-    #    STATEMENT even though I turned off log configurations.
+    # STATEMENT even though I turned off log configurations.
     # So, I manually remove the statements here to save disk and parsing cost.
     f1 = open(PG_LOG_FILE, 'r')
     ret = []
@@ -45,7 +47,6 @@ def read_and_clear_log():
 
     return ret
 
-
 def parse_path_with_state_machine(logs: list, cur: int):
     """
     state list:
@@ -59,7 +60,8 @@ def parse_path_with_state_machine(logs: list, cur: int):
 
     while state != 'PathDone' and cur < len(logs):
         line = logs[cur].strip()
-        print(cur, state, line)
+        if DEBUG:
+            print(cur, state, line)
         #input()
 
         if state == 'PathHeader':
@@ -83,7 +85,7 @@ def parse_path_with_state_machine(logs: list, cur: int):
             path_buffer['rows'] = int(rows)
             path_buffer['startup_cost'] = float(startup_cost)
             path_buffer['total_cost'] = float(total_cost)
-          
+            
             state = 'PathWait'
             cur += 1
 
@@ -118,21 +120,27 @@ def parse_path_with_state_machine(logs: list, cur: int):
             pathkeys = re.match(_PATHKEYS_EXP, line)
             assert(pathkeys)
             path_buffer['pathkeys'] = pathkeys.groups()[0].strip()
-
+            
             state = 'PathWait'
             cur += 1
             
         elif state == 'PathCost':
             if(path_buffer['node'] == 'SeqScan'):
                 parse_seq_scan(line, path_buffer)
+            elif(path_buffer['node'] == 'Gather'):
+                parse_gather(line, path_buffer)
+            elif(path_buffer['node'] == 'GatherMerge'):
+                parse_gather_merge(line, path_buffer)
             elif(path_buffer['node'] == 'IdxScan'):
                 parse_idx_scan(line, path_buffer)
-            elif(path_buffer['node'] == 'BitmapHeapScan'):
-                parse_bitmap_heap_scan(line, path_buffer)
-                
+            elif(path_buffer['node'] == 'NestLoop'):
+                parse_nest_loop(line, path_buffer)
+            else:
+                pass
+
             state = 'PathWait'
             cur += 1
-
+            
         elif state == 'PathJoin':
             _CLAUSES_EXP = r'\ *clauses:(.*)'
             clauses = re.match(_CLAUSES_EXP, line)
@@ -202,8 +210,6 @@ def parse_path_with_state_machine(logs: list, cur: int):
 
     return path_buffer, cur
 
-    
-
 def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: str):
     """
     state list:
@@ -217,7 +223,8 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
 
     while state != 'Done' and cur < len(logs):
         line = logs[cur].strip()
-        print(cur, state, line)
+        if DEBUG:
+            print(cur, state, line)
 
         if state == 'Start':
             if _START_SIGN in line:
@@ -322,67 +329,89 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
 
     return buffer, cur
 
-
 def get_base_path(log_lines: list, cur: int):
-    _START_SIGN = '[VPQO][BASE] set_rel_pathlist started'
-    _END_SIGN = '[VPQO][BASE] set_rel_pathlist done'
+    _START_SIGN = '[JOVIS][BASE] set_rel_pathlist started'
+    _END_SIGN = '[JOVIS][BASE] set_rel_pathlist done'
     return parse_with_state_machine(log_lines, cur, _START_SIGN, _END_SIGN)
 
-
 def get_dp_path(log_lines: list, cur: int):
-    _START_SIGN = '[VPQO][DP] standard_join_search started'
-    _END_SIGN = '[VPQO][DP] standard_join_search done'
+    _START_SIGN = '[JOVIS][DP] standard_join_search started'
+    _END_SIGN = '[JOVIS][DP] standard_join_search done'
     return parse_with_state_machine(log_lines, cur, _START_SIGN, _END_SIGN)
 
 def parse_seq_scan(line: str, buffer: dict):
-    _SEQSCAN_DETAILS_EXP = r'\ *details: cpu_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) baserel_tuples=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) baserel_pages=(\d+) parallel_workers=(\d+) parallel_divisor=(\d+\.\d+) qpqual_startup_cost=(\d+\.\d+) pathtarget_startup_cost=(\d+\.\d+)'
+    _SEQSCAN_DETAILS_EXP = r'\ *details: parallel_workers=(\d+) parallel_divisor=(\d+\.\d+) cpu_run_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) baserel_tuples=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) baserel_pages=(\d+)'
     details = re.match(_SEQSCAN_DETAILS_EXP, line)
     
     if details:
-        cpu_run_cost, cpu_per_tuple, baserel_tuples, pathtarget_cost, \
-            disk_run_cost, spc_seq_page_cost, baserel_pages, parallel_workers, \
-                parallel_divisor, qpqual_startup_cost, pathtarget_startup_cost = details.groups()
+        parallel_workers, parallel_divisor, cpu_run_cost, disk_run_cost, \
+            cpu_per_tuple, baserel_tuples, pathtarget_cost, spc_seq_page_cost, baserel_pages \
+                    = details.groups()
         
         buffer.update({
+            'parallel_workers': int(parallel_workers),
+            'parallel_divisor': float(parallel_divisor),
             'cpu_run_cost': float(cpu_run_cost),
+            'disk_run_cost': float(disk_run_cost),
             'cpu_per_tuple': float(cpu_per_tuple),
             'baserel_tuples': float(baserel_tuples),
             'pathtarget_cost': float(pathtarget_cost),
-            'disk_run_cost': float(disk_run_cost),
             'spc_seq_page_cost': float(spc_seq_page_cost),
-            'baserel_pages': float(baserel_pages),
-            'parallel_workers': int(parallel_workers),
-            'parallel_divisor': float(parallel_divisor),
-            'qpqual_startup_cost': float(qpqual_startup_cost),
-            'pathtarget_startup_cost': float(pathtarget_startup_cost)
+            'baserel_pages': int(baserel_pages),
+        })
+        
+def parse_gather(line: str, buffer: dict):
+    _GATHER_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) subpath_cost=(\d+\.\d+) parallel_tuple_cost=(\d+\.\d+)'
+    details = re.match(_GATHER_DETAILS_EXP, line)
+    
+    if details:
+        run_cost, subpath_cost, parallel_tuple_cost = details.groups()
+        
+        buffer.update({
+            'run_cost': float(run_cost),
+            'subpath_cost': float(subpath_cost),
+            'parallel_tuple_cost': float(parallel_tuple_cost)
+        })
+        
+def parse_gather_merge(line: str, buffer: dict):
+    _GATHERMERGE_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) input_startup_cost=(\d+\.\d+) input_total_cost=(\d+\.\d+) comparison_cost=(\d+\.\d+) logN=(\d+\.\d+) cpu_operator_cost=(\d+\.\d+) parallel_tuple_cost=(\d+\.\d+)'
+    details = re.match(_GATHERMERGE_DETAILS_EXP, line)
+    
+    if details:
+        run_cost, input_startup_cost, input_total_cost, comparison_cost, logN, cpu_operator_cost, parallel_tuple_cost = details.groups()
+        
+        buffer.update({
+            'run_cost': float(run_cost),
+            'input_startup_cost': float(input_startup_cost),
+            'input_total_cost': float(input_total_cost),
+            'comparison_cost': float(comparison_cost),
+            'logN': float(logN),
+            'cpu_operator_cost': float(cpu_operator_cost),
+            'parallel_tuple_cost': float(parallel_tuple_cost)
         })
         
 def parse_idx_scan(line: str, buffer: dict):
-    _IDXSCAN_DETAILS_EXP = r'\ *details: loop_count=(\d+\.\d+) index_scan_cost=(\d+\.\d+) index_correlation=(\d+\.\d+) index_selectivity=(\d+\.\d+) cpu_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) tuples_fetched=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) max_io_cost=(\d+\.\d+) min_io_cost=(\d+\.\d+) spc_seq_page_cost=(\d+\.\d+) spc_random_page_cost=(\d+\.\d+) baserel_pages=(\d+) pages_fetched=(\d+\.\d+)'
+    _IDXSCAN_DETAILS_EXP = r'\ *details: parallel_workers=(\d+) parallel_divisor=(\d+\.\d+) cpu_run_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) baserel_tuples=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) index_scan_cost=(\d+\.\d+) index_correlation=(-?\d+\.\d+) max_io_cost=(\d+\.\d+) min_io_cost=(\d+\.\d+)'
     details = re.match(_IDXSCAN_DETAILS_EXP, line)
     
     if details:
-        loop_count, index_scan_cost, index_correlation, index_selectivity, \
-            cpu_run_cost, cpu_per_tuple, tuples_fetched, pathtarget_cost, \
-                disk_run_cost, max_io_cost, min_io_cost, \
-                    spc_seq_page_cost, spc_random_page_cost, baserel_pages, pages_fetched = details.groups()
+        parallel_workers, parallel_divisor, cpu_run_cost, disk_run_cost, \
+            cpu_per_tuple, baserel_tuples, pathtarget_cost, index_scan_cost, \
+                index_correlation, max_io_cost, min_io_cost \
+                    = details.groups()
         
         buffer.update({
-            'loop_count': float(loop_count),
+            'parallel_workers': int(parallel_workers),
+            'parallel_divisor': float(parallel_divisor),
+            'cpu_run_cost': float(cpu_run_cost),
+            'disk_run_cost': float(disk_run_cost),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'baserel_tuples': float(baserel_tuples),
+            'pathtarget_cost': float(pathtarget_cost),
             'index_scan_cost': float(index_scan_cost),
             'index_correlation': float(index_correlation),
-            'index_selectivity': float(index_selectivity),
-            'cpu_run_cost': float(cpu_run_cost),
-            'cpu_per_tuple': float(cpu_per_tuple),
-            'tuples_fetched': float(tuples_fetched),
-            'pathtarget_cost': float(pathtarget_cost),
-            'disk_run_cost': float(disk_run_cost),
             'max_io_cost': float(max_io_cost),
-            'min_io_cost': float(min_io_cost),
-            'spc_seq_page_cost': float(spc_seq_page_cost),
-            'spc_random_page_cost': float(spc_random_page_cost),
-            'baserel_pages': float(baserel_pages),
-            'pages_fetched': float(pages_fetched)
+            'min_io_cost': float(min_io_cost)
         })
         
 def parse_bitmap_heap_scan(line: str, buffer: dict):
@@ -402,6 +431,37 @@ def parse_bitmap_heap_scan(line: str, buffer: dict):
             'cost_per_page': float(cost_per_page)
         })
 
+def parse_nest_loop(line: str, buffer: dict):
+    _NESTLOOP_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) initial_outer_path_run_cost=(\d+\.\d+) initial_outer_path_rows=(\d+\.\d+) initial_inner_run_cost=(\d+\.\d+) initial_inner_rescan_start_cost=(\d+\.\d+) initial_inner_rescan_run_cost=(\d+\.\d+) is_early_stop=(\d+) has_indexed_join_quals=(\d+) inner_run_cost=(\d+\.\d+) inner_rescan_run_cost=(\d+\.\d+) outer_matched_rows=(\d+\.\d+) outer_unmatched_rows=(\d+\.\d+) inner_scan_frac=(\d+\.\d+) inner_path_rows=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) ntuples=(\d+\.\d+) cost_per_tuple=(\d+\.\d+)'
+    details = re.match(_NESTLOOP_DETAILS_EXP, line)
+    
+    if details:
+        run_cost, initial_outer_path_run_cost, initial_outer_path_rows, \
+            initial_inner_run_cost, initial_inner_rescan_start_cost, initial_inner_rescan_run_cost, \
+                is_early_stop, has_indexed_join_quals, inner_run_cost, inner_rescan_run_cost, \
+                    outer_matched_rows, outer_unmatched_rows, inner_scan_frac, inner_path_rows, \
+                        cpu_per_tuple, ntuples, cost_per_tuple = details.groups()
+        
+        buffer.update({
+            'run_cost': float(run_cost),
+            'initial_outer_path_run_cost': float(initial_outer_path_run_cost),
+            'initial_outer_path_rows': float(initial_outer_path_rows),
+            'initial_inner_run_cost': float(initial_inner_run_cost),
+            'initial_inner_rescan_start_cost': float(initial_inner_rescan_start_cost),
+            'initial_inner_rescan_run_cost': float(initial_inner_rescan_run_cost),
+            'is_early_stop': int(is_early_stop),
+            'has_indexed_join_quals': int(has_indexed_join_quals),
+            'inner_run_cost': float(inner_run_cost),
+            'inner_rescan_run_cost': float(inner_rescan_run_cost),
+            'outer_matched_rows': float(outer_matched_rows),
+            'outer_unmatched_rows': float(outer_unmatched_rows),
+            'inner_scan_frac': float(inner_scan_frac),
+            'inner_path_rows': float(inner_path_rows),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'ntuples': float(ntuples),
+            'cost_per_tuple': float(cost_per_tuple)
+        })
+
 def parse_geqo_with_state_machine(logs: list):
     """
     scan all logs and parse geqo data
@@ -413,10 +473,11 @@ def parse_geqo_with_state_machine(logs: list):
 
     while cur < len(logs):
         line = logs[cur].strip()
-        print(cur, state, line)
+        if DEBUG:
+            print(cur, state, line)
 
         if state == 'Init':
-            _INIT_EXP = r'.*\[VPQO\]\[GEQO\] GEQO selected (\d*) pool entries, best (\d*\.\d*), worst (\d*\.\d*)'
+            _INIT_EXP = r'.*\[JOVIS\]\[GEQO\] GEQO selected (\d*) pool entries, best (\d*\.\d*), worst (\d*\.\d*)'
             initinfo = re.match(_INIT_EXP, line)
             if initinfo is None:
                 cur += 1
@@ -431,7 +492,7 @@ def parse_geqo_with_state_machine(logs: list):
             cur += 1
         
         elif state == 'Mapping':
-            _MAPPING_EXP = r'\[VPQO\]\[GEQO\] gene=(\d*) => relids=(.*)'
+            _MAPPING_EXP = r'\[JOVIS\]\[GEQO\] gene=(\d*) => relids=(.*)'
             mapinfo = re.match(_MAPPING_EXP, line)
             if mapinfo is None:
                 if 'map' not in buffer:
@@ -452,7 +513,7 @@ def parse_geqo_with_state_machine(logs: list):
 
         elif state == 'Wait':
             _GENERATION_EXP = r'.*\[GEQO\] *(\-?\d*).*Best: (.*)  Worst: (.*)  Mean: (.*)  Avg: (.*)'
-            _OFFSPRING1_EXP = r'\[VPQO\]\[GEQO\] parents=\[(\d*), (\d*)\]'
+            _OFFSPRING1_EXP = r'\[JOVIS\]\[GEQO\] parents=\[(\d*), (\d*)\]'
             if re.match(_GENERATION_EXP, line):
                 state = 'Gen'
             elif re.match(_OFFSPRING1_EXP, line):
@@ -462,7 +523,7 @@ def parse_geqo_with_state_machine(logs: list):
 
 
         elif state == 'Offspring':
-            _OFFSPRING1_EXP = r'\[VPQO\]\[GEQO\] parents=\[(\d*), (\d*)\]'
+            _OFFSPRING1_EXP = r'\[JOVIS\]\[GEQO\] parents=\[(\d*), (\d*)\]'
 
             offspringinfo = re.match(_OFFSPRING1_EXP, line)
             if offspringinfo:
@@ -481,7 +542,7 @@ def parse_geqo_with_state_machine(logs: list):
                     continue
 
                 # Wait until we find newone_idx
-                _OFFSPRING2_EXP = r'\[VPQO\]\[GEQO\] newone_idx=(\d*)'
+                _OFFSPRING2_EXP = r'\[JOVIS\]\[GEQO\] newone_idx=(\d*)'
                 offspring2info = re.match(_OFFSPRING2_EXP, line)
                 if offspring2info is None:
                     cur += 1
@@ -548,15 +609,16 @@ def parse_geqo_with_state_machine(logs: list):
     return buffer
 
 def parse_geqo_path(logs: list) -> dict:
-    # _GENE_EXP = r'\[VPQO\]\[GEQO\]\[JOININFO\]((:? \d)*)'
-    _GENE_EXP = r'\[VPQO\]\[GEQO\]\[JOININFO\]\ gene=((:? \d)*)'
+    # _GENE_EXP = r'\[JOVIS\]\[GEQO\]\[JOININFO\]((:? \d)*)'
+    _GENE_EXP = r'\[JOVIS\]\[GEQO\]\[JOININFO\]\ gene=((:? \d)*)'
 
     cur = 0
     buffer = {}
 
     while cur < len(logs):
         line = logs[cur].strip()
-        print(cur, line)
+        if DEBUG:
+            print(cur, line)
 
         geneinfo = re.match(_GENE_EXP, line)
         if geneinfo is None:
@@ -569,12 +631,11 @@ def parse_geqo_path(logs: list) -> dict:
             continue
 
         # reuse this
-        _buf, _cur = parse_with_state_machine(logs, cur, '[VPQO][GEQO][JOININFO] gene=', '[VPQO][GEQO][JOININFO] Done')
+        _buf, _cur = parse_with_state_machine(logs, cur, '[JOVIS][GEQO][JOININFO] gene=', '[JOVIS][GEQO][JOININFO] Done')
         buffer[gene] = _buf
         cur = _cur
 
     return buffer
-
 
 def get_geqo_data(log_lines: list) -> dict:
     data = parse_geqo_with_state_machine(log_lines)
@@ -582,7 +643,7 @@ def get_geqo_data(log_lines: list) -> dict:
     return data
 
 def split_log_lines(log_lines):
-    _MARK = '[VPQO] split line'
+    _MARK = '[JOVIS] split line'
     ret, for_items = [], []
     last = 0
     for idx, line in enumerate(log_lines):
@@ -609,8 +670,8 @@ def process_log(log_lines):
     if '[GEQO]' in ''.join(log_lines):
         ret['type'] = 'geqo'
 
-    _START_BASE_SIGN = '[VPQO][BASE] set_rel_pathlist started'
-    _START_DP_SIGN = '[VPQO][DP] standard_join_search started'
+    _START_BASE_SIGN = '[JOVIS][BASE] set_rel_pathlist started'
+    _START_DP_SIGN = '[JOVIS][DP] standard_join_search started'
 
     cur = 0
     # first pass for base and DP
@@ -635,19 +696,19 @@ def process_log(log_lines):
     return ret
 
 def try_explain_analyze(in_query: str) -> str:
-    hint_start, hint_end = in_query.find('/*+'), in_query.find('*/')
+    hint_match = re.search(r'/\*\+.*?\*/', in_query, re.DOTALL)
     hint, query = '', ''
-    if hint_start != -1 and hint_end != -1:
-        hint = in_query[hint_start:hint_end+2]
-        query = in_query[hint_end+2:]
+    
+    if hint_match:
+        hint = hint_match.group(0)
+        query = in_query.replace(hint, '').strip()
     else:
-        query = in_query
-
+        query = in_query.strip()
+    
     if 'explain' not in query.lower():
         query = 'EXPLAIN (ANALYZE true, VERBOSE true, FORMAT JSON) ' + query
 
     return hint + ' ' + query
-
         
 class QueryView(APIView):
     def post(self, request, format=None):
@@ -656,16 +717,13 @@ class QueryView(APIView):
         d = request.data.get('db', 'postgres')
         q = try_explain_analyze(q)
 
-        # Additional query to get server statistics
-        _PG_CLASS_QUERY = 'SELECT relname, relpages, reltuples FROM pg_class;'
-        
         # get query results
         try:
             conn = psycopg2.connect("host=localhost dbname={} user=postgres".format(d))    # Connect to your postgres DB
             cur = conn.cursor()         # Open a cursor to perform database operations
 
             clear_previous_log()
-
+            
             cur.execute(q)              # Execute a query
             records = cur.fetchall()    # Retrieve query results
 
@@ -677,11 +735,8 @@ class QueryView(APIView):
                 opt_data['for'] = for_items[idx]
                 ret.append(opt_data)
 
-            cur.execute(_PG_CLASS_QUERY)
-            pg_class_results = cur.fetchall()
-
             # return
-            return Response({'query': q, 'result': records, 'pg_class': pg_class_results, 'optimizer': ret})
+            return Response({'query': q, 'result': records, 'optimizer': ret})
         except psycopg2.OperationalError as e:
             print(e)
             return Response({'error': str(e)})
