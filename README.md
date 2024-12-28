@@ -11,8 +11,14 @@ docker run --name some-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpasswo
 
 ## Logfile Configuration
 
-1. Set the path to the PostgreSQL log file `PG_LOG_FILE` in `./backend/settings.py`.
-2. Specify the backup directory `PG_LOG_BACKUP_DIR` for storing old logs.
+1. Set the `JOVIS_PG` environment variable to specify the root directory of the PostgreSQL installation:
+
+   ```bash
+   export JOVIS_PG=/path/to/postgres
+   ```
+
+2. Set the path to the PostgreSQL log file `PG_LOG_FILE` in `./backend/settings.py`.
+3. Specify the backup directory `PG_LOG_BACKUP_DIR` for storing old logs.
 
 ## Installation
 

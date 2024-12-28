@@ -1,10 +1,9 @@
-import psycopg2
 import os
 import time
 import re
 
+import psycopg2
 from django.shortcuts import render
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
@@ -47,12 +46,29 @@ def read_and_clear_log():
 
     return ret
 
+def decide_next_state(logs, cur):
+    # check indentation width
+    raw_cur_line, raw_prev_line = logs[cur].replace('\t', '    '), logs[cur-1].replace('\t', '    ')
+    cur_indent = len(raw_cur_line) - len(raw_cur_line.lstrip())
+    prev_indent = len(raw_prev_line) - len(raw_prev_line.lstrip())
+    is_sub = prev_indent < cur_indent
+    
+    if is_sub:
+        state = 'PathSub'
+    else:
+        state = 'PathDone'
+        
+    return state
+    
+def log_debug(cur, state, line):
+    if DEBUG:
+        print(cur, state, line)
+
 def parse_path_with_state_machine(logs: list, cur: int):
     """
     state list:
     PathHeader, PathKeys, PathJoin, PathMJoin, PathOuter, PathInner
-    PathWait, PathWait2
-    PathDone
+    PathWait, PathWait2, PathSub, PathDone
     """
 
     state = 'PathHeader'
@@ -60,9 +76,7 @@ def parse_path_with_state_machine(logs: list, cur: int):
 
     while state != 'PathDone' and cur < len(logs):
         line = logs[cur].strip()
-        if DEBUG:
-            print(cur, state, line)
-        #input()
+        log_debug(cur, state, line)
 
         if state == 'PathHeader':
             _PATHHEADER_EXP = r'\ *(\w*)\((.*)\) required_outer \((\w*)\) rows=(\d*) cost=(\d*\.\d*)\.\.(\d*\.\d*)'
@@ -90,54 +104,29 @@ def parse_path_with_state_machine(logs: list, cur: int):
             cur += 1
 
         elif state == 'PathWait':
-            # a temp state to decide if it is PathKeys, PathJoin, or PathMJoin
+            # a temp state to decide if it is PathKeys, PathJoin, PathMJoin, or PathCost
             _PATHKEYS_EXP = r'\ *pathkeys:\ (.*)'
             _CLAUSES_EXP = r'\ *clauses:(.*)'
+            _MERGEJOIN_INFO_EXP = r'\ *sortouter=(\d) sortinner=(\d) materializeinner=(\d)'
             _COSTKEYS_EXP = r'\ *details:\ (.*)'
-            #_MERGEJOIN_INFO_EXP = r'\ *sortouter=(\d) sortinner=(\d) materializeinner=(\d)'
 
             if re.match(_PATHKEYS_EXP, line):
                 state = 'PathKeys'
             elif re.match(_CLAUSES_EXP, line):
                 state = 'PathJoin'
+            elif re.match(_MERGEJOIN_INFO_EXP, line):
+               state = 'PathMJoin'
             elif re.match(_COSTKEYS_EXP, line):
                 state = 'PathCost'
-            #elif re.match(_MERGEJOIN_INFO_EXP, line):
-            #    state = 'PathMJoin'
             else:
-                # check indentation width
-                raw_cur_line, raw_prev_line = logs[cur].replace('\t', '    '), logs[cur-1].replace('\t', '    ')
-                cur_indent = len(raw_cur_line) - len(raw_cur_line.lstrip())
-                prev_indent = len(raw_prev_line) - len(raw_prev_line.lstrip())
-                is_sub = prev_indent < cur_indent
-                if is_sub:
-                    state = 'PathSub'
-                else:
-                    state = 'PathDone'
-
+                state = decide_next_state(logs, cur)
+                
         elif state == 'PathKeys':
             _PATHKEYS_EXP = r'\ *pathkeys:\ (.*)'
             pathkeys = re.match(_PATHKEYS_EXP, line)
             assert(pathkeys)
             path_buffer['pathkeys'] = pathkeys.groups()[0].strip()
             
-            state = 'PathWait'
-            cur += 1
-            
-        elif state == 'PathCost':
-            if(path_buffer['node'] == 'SeqScan'):
-                parse_seq_scan(line, path_buffer)
-            elif(path_buffer['node'] == 'Gather'):
-                parse_gather(line, path_buffer)
-            elif(path_buffer['node'] == 'GatherMerge'):
-                parse_gather_merge(line, path_buffer)
-            elif(path_buffer['node'] == 'IdxScan'):
-                parse_idx_scan(line, path_buffer)
-            elif(path_buffer['node'] == 'NestLoop'):
-                parse_nest_loop(line, path_buffer)
-            else:
-                pass
-
             state = 'PathWait'
             cur += 1
             
@@ -158,14 +147,33 @@ def parse_path_with_state_machine(logs: list, cur: int):
             mj_info = re.match(_MERGEJOIN_INFO_EXP, line)
             assert(mj_info)
 
-            outerkeys_exist, innerkeys_exist, m_inner_exist = mj_info.groups()
-            path_buffer['join']['mergejoin_info'] = {
-                'outerkeys_exist': outerkeys_exist,
-                'innerkeys_exist': innerkeys_exist,
-                'm_inner_exist': m_inner_exist
-            }
+            sortouter, sortinner, matinner = mj_info.groups()
+            path_buffer['sortouter'] = int(sortouter)
+            path_buffer['sortinner'] = int(sortinner)
+            path_buffer['matinner'] = int(matinner)
 
             state = 'PathOuter'
+            cur += 1
+            
+        elif state == 'PathCost':
+            if(path_buffer['node'] == 'SeqScan'):
+                parse_seq_scan(line, path_buffer)
+            elif(path_buffer['node'] == 'Gather'):
+                parse_gather(line, path_buffer)
+            elif(path_buffer['node'] == 'GatherMerge'):
+                parse_gather_merge(line, path_buffer)
+            elif(path_buffer['node'] == 'IdxScan'):
+                parse_idx_scan(line, path_buffer)
+            elif(path_buffer['node'] == 'NestLoop'):
+                parse_nest_loop(line, path_buffer)
+            elif(path_buffer['node'] == 'MergeJoin'):
+                parse_merge_join(line, path_buffer)
+            elif(path_buffer['node'] == 'HashJoin'):
+                parse_hash_join(line, path_buffer)
+            else:
+                pass
+
+            state = 'PathWait'
             cur += 1
 
         elif state == 'PathWait2':
@@ -188,7 +196,7 @@ def parse_path_with_state_machine(logs: list, cur: int):
             inner, _cur = parse_path_with_state_machine(logs, cur)
             path_buffer['join']['inner'] = inner 
 
-            state = 'PathWait3'
+            state = decide_next_state(logs, cur)
             cur = _cur
 
         elif state == 'PathSub':
@@ -198,16 +206,6 @@ def parse_path_with_state_machine(logs: list, cur: int):
             state = 'PathDone'
             cur = _cur
 
-        elif state == 'PathWait3':
-            raw_cur_line, raw_prev_line = logs[cur].replace('\t', '    '), logs[cur-1].replace('\t', '    ')
-            cur_indent = len(raw_cur_line) - len(raw_cur_line.lstrip())
-            prev_indent = len(raw_prev_line) - len(raw_prev_line.lstrip())
-            is_super = prev_indent > cur_indent
-            if is_super:
-                state = 'PathDone'
-            else:
-                state = 'PathSub'
-
     return path_buffer, cur
 
 def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: str):
@@ -215,7 +213,7 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
     state list:
         Start
         RelOptHeader, RelOptPathlist
-        Path (PathHeader, PathKeys, PathJoin, PathMJoin)
+        Path (PathHeader, PathKeys, PathJoin)
         Done
     """
     state = 'Start'
@@ -223,8 +221,7 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
 
     while state != 'Done' and cur < len(logs):
         line = logs[cur].strip()
-        if DEBUG:
-            print(cur, state, line)
+        log_debug(cur, state, line)
 
         if state == 'Start':
             if _START_SIGN in line:
@@ -414,23 +411,6 @@ def parse_idx_scan(line: str, buffer: dict):
             'min_io_cost': float(min_io_cost)
         })
         
-def parse_bitmap_heap_scan(line: str, buffer: dict):
-    _SEQSCAN_DETAILS_EXP = r'\ *details: cpu_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) tuples_fetched=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) pages_fetched=(\d+\.\d+) cost_per_page=(\d+\.\d+)'
-    details = re.match(_SEQSCAN_DETAILS_EXP, line)
-    
-    if details:
-        cpu_run_cost, cpu_per_tuple, tuples_fetched, pathtarget_cost, \
-            pages_fetched, cost_per_page = details.groups()
-        
-        buffer.update({
-            'cpu_run_cost': float(cpu_run_cost),
-            'cpu_per_tuple': float(cpu_per_tuple),
-            'tuples_fetched': float(tuples_fetched),
-            'pathtarget_cost': float(pathtarget_cost),
-            'pages_fetched': float(pages_fetched),
-            'cost_per_page': float(cost_per_page)
-        })
-
 def parse_nest_loop(line: str, buffer: dict):
     _NESTLOOP_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) initial_outer_path_run_cost=(\d+\.\d+) initial_outer_path_rows=(\d+\.\d+) initial_inner_run_cost=(\d+\.\d+) initial_inner_rescan_start_cost=(\d+\.\d+) initial_inner_rescan_run_cost=(\d+\.\d+) is_early_stop=(\d+) has_indexed_join_quals=(\d+) inner_run_cost=(\d+\.\d+) inner_rescan_run_cost=(\d+\.\d+) outer_matched_rows=(\d+\.\d+) outer_unmatched_rows=(\d+\.\d+) inner_scan_frac=(\d+\.\d+) inner_path_rows=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) ntuples=(\d+\.\d+) cost_per_tuple=(\d+\.\d+)'
     details = re.match(_NESTLOOP_DETAILS_EXP, line)
@@ -461,6 +441,66 @@ def parse_nest_loop(line: str, buffer: dict):
             'ntuples': float(ntuples),
             'cost_per_tuple': float(cost_per_tuple)
         })
+        
+def parse_merge_join(line: str, buffer: dict):
+    _MERGEJOIN_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) initial_sort_path_run_cost=(\d+\.\d+) initial_outer_path_run_cost=(\d+\.\d+) initial_outer_sel=(\d+\.\d+) mat_inner_cost=(\d+\.\d+) bare_inner_cost=(\d+\.\d+) merge_qual_cost=(\d+\.\d+) outer_rows=(\d+\.\d+) inner_rows=(\d+\.\d+) outer_skip_rows=(\d+\.\d+) inner_skip_rows=(\d+\.\d+) rescanratio=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) mergejointuples=(\d+\.\d+) cost_per_tuple=(\d+\.\d+)'
+    details = re.match(_MERGEJOIN_DETAILS_EXP, line)
+    
+    if details:
+        run_cost, initial_sort_path_run_cost, initial_outer_path_run_cost, initial_outer_sel, \
+            mat_inner_cost, bare_inner_cost, merge_qual_cost, outer_rows, inner_rows, \
+                outer_skip_rows, inner_skip_rows, rescanratio, cpu_per_tuple, mergejointuples, cost_per_tuple = details.groups()
+        
+        buffer.update({
+            'run_cost': float(run_cost),
+            'initial_sort_path_run_cost': float(initial_sort_path_run_cost),
+            'initial_outer_path_run_cost': float(initial_outer_path_run_cost),
+            'initial_outer_sel': float(initial_outer_sel),
+            'mat_inner_cost': float(mat_inner_cost),
+            'bare_inner_cost': float(bare_inner_cost),
+            'merge_qual_cost': float(merge_qual_cost),
+            'outer_rows': float(outer_rows),
+            'inner_rows': float(inner_rows),
+            'outer_skip_rows': float(outer_skip_rows),
+            'inner_skip_rows': float(inner_skip_rows),
+            'rescanratio': float(rescanratio),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'mergejointuples': float(mergejointuples),
+            'cost_per_tuple': float(cost_per_tuple)
+        })
+        
+def parse_hash_join(line: str, buffer: dict):
+    _HASHJOIN_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) initial_numbatches=(\d+) initial_outer_path_run_cost=(\d+\.\d+) initial_cpu_operator_cost=(\d+\.\d+) initial_num_hashclauses=(\d+) initial_outer_path_rows=(\d+\.\d+) initial_seq_page_cost=(\d+\.\d+) initial_innerpages=(\d+\.\d+) initial_outerpages=(\d+\.\d+) is_early_stop=(\d+) outer_matched_rows=(\d+\.\d+) outer_unmatched_rows=(\d+\.\d+) matched_bucket_rows=(\d+\.\d+) unmatched_bucket_rows=(\d+\.\d+) bucket_rows=(\d+\.\d+) hash_qual_cost=(\d+\.\d+) outer_path_rows=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) hashjointuples=(\d+\.\d+) cost_per_tuple=(\d+\.\d+)'
+    details = re.match(_HASHJOIN_DETAILS_EXP, line)
+    
+    if details:
+        run_cost, initial_numbatches, initial_outer_path_run_cost, initial_cpu_operator_cost, \
+            initial_num_hashclauses, initial_outer_path_rows, initial_seq_page_cost, initial_innerpages, \
+                initial_outerpages, is_early_stop, outer_matched_rows, outer_unmatched_rows, matched_bucket_rows, \
+                    unmatched_bucket_rows, bucket_rows, hash_qual_cost, outer_path_rows, cpu_per_tuple, hashjointuples, cost_per_tuple = details.groups()
+                
+        buffer.update({
+            'run_cost': float(run_cost),
+            'initial_numbatches': int(initial_numbatches),
+            'initial_outer_path_run_cost': float(initial_outer_path_run_cost),
+            'initial_cpu_operator_cost': float(initial_cpu_operator_cost),
+            'initial_num_hashclauses': int(initial_num_hashclauses),
+            'initial_outer_path_rows': float(initial_outer_path_rows),
+            'initial_seq_page_cost': float(initial_seq_page_cost),
+            'initial_innerpages': float(initial_innerpages),
+            'initial_outerpages': float(initial_outerpages),
+            'is_early_stop': int(is_early_stop),
+            'outer_matched_rows': float(outer_matched_rows),
+            'outer_unmatched_rows': float(outer_unmatched_rows),
+            'matched_bucket_rows': float(matched_bucket_rows),
+            'unmatched_bucket_rows': float(unmatched_bucket_rows),
+            'bucket_rows': float(bucket_rows),
+            'hash_qual_cost': float(hash_qual_cost),
+            'outer_path_rows': float(outer_path_rows),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'hashjointuples': float(hashjointuples),
+            'cost_per_tuple': float(cost_per_tuple)
+        })
 
 def parse_geqo_with_state_machine(logs: list):
     """
@@ -473,8 +513,7 @@ def parse_geqo_with_state_machine(logs: list):
 
     while cur < len(logs):
         line = logs[cur].strip()
-        if DEBUG:
-            print(cur, state, line)
+        log_debug(cur, state, line)
 
         if state == 'Init':
             _INIT_EXP = r'.*\[JOVIS\]\[GEQO\] GEQO selected (\d*) pool entries, best (\d*\.\d*), worst (\d*\.\d*)'
@@ -617,8 +656,7 @@ def parse_geqo_path(logs: list) -> dict:
 
     while cur < len(logs):
         line = logs[cur].strip()
-        if DEBUG:
-            print(cur, line)
+        log_debug(cur, 'GEQO', line)
 
         geneinfo = re.match(_GENE_EXP, line)
         if geneinfo is None:
