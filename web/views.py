@@ -9,7 +9,7 @@ from rest_framework.response import Response
 
 from backend.settings import PG_LOG_FILE, PG_LOG_BACKUP_DIR
 
-DEBUG = True
+DEBUG = False
 
 def clear_previous_log():
     os.system(f"cp {PG_LOG_FILE} {PG_LOG_BACKUP_DIR}/{time.time()}_prev")
@@ -164,6 +164,14 @@ def parse_path_with_state_machine(logs: list, cur: int):
                 parse_gather_merge(line, path_buffer)
             elif(path_buffer['node'] == 'IdxScan'):
                 parse_idx_scan(line, path_buffer)
+            elif(path_buffer['node'] == 'BitmapHeapScan'):
+                parse_bitmap_heap_scan(line, path_buffer)
+            elif(path_buffer['node'] == 'SubqueryScan'):
+                parse_subquery_scan(line, path_buffer)
+            elif(path_buffer['node'] == 'Sort'):
+                parse_sort(line, path_buffer)
+            elif(path_buffer['node'] == 'IncrementalSort'):
+                parse_incremental_sort(line, path_buffer)
             elif(path_buffer['node'] == 'NestLoop'):
                 parse_nest_loop(line, path_buffer)
             elif(path_buffer['node'] == 'MergeJoin'):
@@ -232,18 +240,19 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
         elif state == 'RelOptHeader':
             _RELINFO_EXP = r'RELOPTINFO \((.*)\): rows=(\d*) width=(\d*)'
 
-            # get relinfo that is must be in the logs
+            # get relinfo if it exists in the logs
             relinfo = re.match(_RELINFO_EXP, line)
-            assert(relinfo)
+            
+            if relinfo:
+                relid, rows, width = relinfo.groups()
+                buffer = {
+                    'relid': relid,
+                    'rows': int(rows),
+                    'width': int(width)
+                }
 
-            relid, rows, width = relinfo.groups()
-            buffer = {
-                'relid': relid,
-                'rows': int(rows),
-                'width': int(width)
-            }
-
-            state = 'Wait'
+                state = 'Wait'
+            
             cur += 1
 
         elif state == 'Wait':
@@ -251,6 +260,7 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
             _CHEAPESTPARAMPATH_LIST_EXP = 'cheapest parameterized paths:'
             _CHEAPESTSTARTUPPATH_EXP = 'cheapest startup path:'
             _CHEAPESTTOTALPATH_EXP = 'cheapest total path:'
+            _APPENDPATH_EXP = 'append path:'
 
             if _PATH_LIST_EXP in line:
                 state = 'PathList'
@@ -261,6 +271,9 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
                 cur += 1
             elif _CHEAPESTTOTALPATH_EXP in line:
                 state = 'CheapestTotalPath'
+                cur += 1
+            elif _APPENDPATH_EXP in line:
+                state = 'RelOptHeader'
                 cur += 1
             elif _END_SIGN in line:
                 state = 'Done'
@@ -409,6 +422,73 @@ def parse_idx_scan(line: str, buffer: dict):
             'index_correlation': float(index_correlation),
             'max_io_cost': float(max_io_cost),
             'min_io_cost': float(min_io_cost)
+        })
+
+
+def parse_bitmap_heap_scan(line: str, buffer: dict):
+    _BITMAPSCAN_DETAILS_EXP = r'\ *details: parallel_workers=(\d+) parallel_divisor=(\d+\.\d+) cpu_run_cost=(\d+\.\d+) disk_run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) tuples_fetched=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) cost_per_page=(\d+\.\d+) pages_fetched=(\d+\.\d+)'
+    details = re.match(_BITMAPSCAN_DETAILS_EXP, line)
+    
+    if details:
+        parallel_workers, parallel_divisor, cpu_run_cost, disk_run_cost, \
+            cpu_per_tuple, tuples_fetched, pathtarget_cost, cost_per_page, pages_fetched \
+                = details.groups()
+        
+        buffer.update({
+            'parallel_workers': int(parallel_workers),
+            'parallel_divisor': float(parallel_divisor),
+            'cpu_run_cost': float(cpu_run_cost),
+            'disk_run_cost': float(disk_run_cost),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'tuples_fetched': float(tuples_fetched),
+            'pathtarget_cost': float(pathtarget_cost),
+            'cost_per_page': float(cost_per_page),
+            'pages_fetched': float(pages_fetched)
+        })
+        
+def parse_subquery_scan(line: str, buffer: dict):
+    _SUBQSCAN_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) subpath_total_cost=(\d+\.\d+) subpath_rows=(\d+\.\d+)'
+    details = re.match(_SUBQSCAN_DETAILS_EXP, line)
+    
+    if details:
+        run_cost, cpu_per_tuple, pathtarget_cost, subpath_total_cost, subpath_rows = details.groups()
+        
+        buffer.update({
+            'run_cost': float(run_cost),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'pathtarget_cost': float(pathtarget_cost),
+            'subpath_total_cost': float(subpath_total_cost),
+            'subpath_rows': float(subpath_rows)
+        })
+        
+def parse_sort(line: str, buffer: dict):
+    _SORT_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) cpu_operator_cost=(\d+\.\d+)'
+    details = re.match(_SORT_DETAILS_EXP, line)
+    
+    if details:
+        run_cost, cpu_operator_cost = details.groups()
+        
+        buffer.update({
+            'run_cost': float(run_cost),
+            'cpu_operator_cost': float(cpu_operator_cost)
+        })
+        
+def parse_incremental_sort(line: str, buffer: dict):
+    _INCSORT_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) group_startup_cost=(\d+\.\d+) group_run_cost=(\d+\.\d+) group_input_run_cost=(\d+\.\d+) input_groups=(\d+\.\d+) cpu_tuple_cost=(\d+\.\d+) comparison_cost=(\d+\.\d+)'
+    details = re.match(_INCSORT_DETAILS_EXP, line)
+    
+    if details:
+        run_cost, group_startup_cost, group_run_cost, group_input_run_cost, \
+            input_groups, cpu_tuple_cost, comparison_cost = details.groups()
+        
+        buffer.update({
+            'run_cost': float(run_cost),
+            'group_startup_cost': float(group_startup_cost),
+            'group_run_cost': float(group_run_cost),
+            'group_input_run_cost': float(group_input_run_cost),
+            'input_groups': float(input_groups),
+            'cpu_tuple_cost': float(cpu_tuple_cost),
+            'comparison_cost': float(comparison_cost)
         })
         
 def parse_nest_loop(line: str, buffer: dict):
@@ -766,6 +846,7 @@ class QueryView(APIView):
             records = cur.fetchall()    # Retrieve query results
 
             log_lines = read_and_clear_log()
+            # opt_data = process_log(log_lines)
             log_lines_list, for_items = split_log_lines(log_lines)
             ret = []
             for idx, logs in enumerate(log_lines_list):
@@ -775,6 +856,7 @@ class QueryView(APIView):
 
             # return
             return Response({'query': q, 'result': records, 'optimizer': ret})
+            # return Response({'query': q, 'result': records, 'optimizer': opt_data})
         except psycopg2.OperationalError as e:
             print(e)
             return Response({'error': str(e)})
