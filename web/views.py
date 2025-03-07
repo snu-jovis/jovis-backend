@@ -607,6 +607,20 @@ def parse_geqo_with_state_machine(logs: list):
             buffer['init'] = {'best': float(best), 'worst': float(worst)}
             buffer['gen'] = []
 
+            state = 'Conf'
+            cur += 1
+            
+        elif state == 'Conf':
+            _CONF_EXP = r'.*\[JOVIS\]\[GEQO\] geqo_seed (\d*\.\d*), selection_bias (\d*\.\d*)'
+            confinfo = re.match(_CONF_EXP, line)
+            if confinfo is None:
+                cur += 1
+                continue
+            
+            geqo_seed, selection_bias = confinfo.groups()
+            buffer['geqo_seed'] = float(geqo_seed)
+            buffer['selection_bias'] = float(selection_bias)
+            
             state = 'Mapping'
             cur += 1
         
@@ -814,19 +828,28 @@ def process_log(log_lines):
     return ret
 
 def try_explain_analyze(in_query: str) -> str:
+    in_query = re.sub(r'/\*.*?\*/', '', in_query, flags=re.DOTALL).strip()
+    
     hint_match = re.search(r'/\*\+.*?\*/', in_query, re.DOTALL)
     hint, query = '', ''
     
     if hint_match:
         hint = hint_match.group(0)
-        query = in_query.replace(hint, '').strip()
-    else:
-        query = in_query.strip()
+        in_query = in_query.replace(hint, '').strip()
+        
+    set_statements = []
+    
+    for stmt in in_query.split(';'):
+        stmt = stmt.strip()
+        if stmt.lower().startswith("set "):
+            set_statements.append(stmt)
+        elif stmt:
+            query = stmt
     
     if 'explain' not in query.lower():
         query = 'EXPLAIN (ANALYZE true, VERBOSE true, FORMAT JSON) ' + query
 
-    return hint + ' ' + query
+    return "; ".join(set_statements) + "; " + hint + ' ' + query
         
 class QueryView(APIView):
     def post(self, request, format=None):
@@ -846,17 +869,14 @@ class QueryView(APIView):
             records = cur.fetchall()    # Retrieve query results
 
             log_lines = read_and_clear_log()
-            # opt_data = process_log(log_lines)
             log_lines_list, for_items = split_log_lines(log_lines)
             ret = []
             for idx, logs in enumerate(log_lines_list):
                 opt_data = process_log(logs)
                 opt_data['for'] = for_items[idx]
                 ret.append(opt_data)
-
-            # return
+                
             return Response({'query': q, 'result': records, 'optimizer': ret})
-            # return Response({'query': q, 'result': records, 'optimizer': opt_data})
         except psycopg2.OperationalError as e:
             print(e)
             return Response({'error': str(e)})
