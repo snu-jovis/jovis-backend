@@ -273,8 +273,7 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
                 state = 'CheapestTotalPath'
                 cur += 1
             elif _APPENDPATH_EXP in line:
-                state = 'RelOptHeader'
-                cur += 1
+                state = 'AppendRelOpt'
             elif _END_SIGN in line:
                 state = 'Done'
                 cur += 1
@@ -336,6 +335,22 @@ def parse_with_state_machine(logs: list, cur: int, _START_SIGN: str, _END_SIGN: 
 
             state = 'Wait'
             cur = _cur
+
+        elif state == 'AppendRelOpt':
+            # custom start / end sign for the relinfo
+            relinfo_start_sign = logs[cur].strip()
+            relinfo_end_sign = 'append path done'
+            _append_buf, _cur = parse_with_state_machine(
+                logs, cur, relinfo_start_sign, relinfo_end_sign)
+            cur = _cur
+
+            # add it to the buffer
+            if 'append' not in buffer:
+                buffer['append'] = []
+            buffer['append'].append(_append_buf)
+
+            state = 'Wait'
+
 
     return buffer, cur
 
