@@ -178,6 +178,12 @@ def parse_path_with_state_machine(logs: list, cur: int):
                 parse_merge_join(line, path_buffer)
             elif(path_buffer['node'] == 'HashJoin'):
                 parse_hash_join(line, path_buffer)
+            elif(path_buffer['node'] == 'CteScan'):
+                parse_cte_scan(line, path_buffer)
+            elif(path_buffer['node'] == 'MergeAppend'):
+                parse_merge_append(line, path_buffer)
+            elif(path_buffer['node'] == 'Append'):
+                parse_append(line, path_buffer)
             else:
                 pass
 
@@ -596,6 +602,55 @@ def parse_hash_join(line: str, buffer: dict):
             'hashjointuples': float(hashjointuples),
             'cost_per_tuple': float(cost_per_tuple)
         })
+    
+def parse_cte_scan(line: str, buffer: dict):
+    _CTESCAN_DETAILS_EXP = r'\ *details: run_cost=(\d+\.\d+) cpu_per_tuple=(\d+\.\d+) baserel_tuples=(\d+\.\d+) pathtarget_cost=(\d+\.\d+) rows=(\d+\.\d+)'
+    details = re.match(_CTESCAN_DETAILS_EXP, line)
+
+    if details:
+        run_cost, cpu_per_tuple, baserel_tuples, pathtarget_cost, rows = details.groups()
+
+        buffer.update({
+            'run_cost': float(run_cost),
+            'cpu_per_tuple': float(cpu_per_tuple),
+            'baserel_tuples': float(baserel_tuples),
+            'pathtarget_cost': float(pathtarget_cost),
+            'rows': float(rows)
+        })
+
+
+def parse_merge_append(line: str, buffer: dict):
+    _MERGEAPPEND_DETAILS_EXP = r'\ *details: rows=(\d+\.\d+) run_cost=(\d+\.\d+) comparison_cost=(\d+\.\d+) cpu_tuple_cost=(\d+\.\d+) n_streams=(\d+) multiplier=(\d+\.\d+)'
+    details = re.match(_MERGEAPPEND_DETAILS_EXP, line)
+
+    if details:
+        rows, run_cost, comparison_cost, cpu_tuple_cost, n_streams, multiplier = details.groups()
+
+        buffer.update({
+            'rows': float(rows),
+            'run_cost': float(run_cost),
+            'comparison_cost': float(comparison_cost),
+            'cpu_tuple_cost': float(cpu_tuple_cost),
+            'n_streams': int(n_streams),
+            'multiplier': float(multiplier)
+        })
+
+def parse_append(line: str, buffer: dict):
+    _APPEND_DETAILS_EXP = r'\ *details: cpu_tuple_cost=(\d+\.\d+) multiplier=(\d+\.\d+) partial_cost=(\d+\.\d+) nonpartial_cost=(\d+\.\d+) total_cost=(\d+\.\d+) parallel_aware=(\d+)'
+    details = re.match(_APPEND_DETAILS_EXP, line)
+
+    if details:
+        cpu_tuple_cost, multiplier, partial_cost, nonpartial_cost, total_cost, parallel_aware = details.groups()
+
+        buffer.update({
+            'cpu_tuple_cost': float(cpu_tuple_cost),
+            'multiplier': float(multiplier),
+            'partial_cost': float(partial_cost),
+            'nonpartial_cost': float(nonpartial_cost),
+            'total_cost': float(total_cost),
+            'parallel_aware': int(parallel_aware)
+        })
+
 
 def parse_geqo_with_state_machine(logs: list):
     """
