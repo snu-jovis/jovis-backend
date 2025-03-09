@@ -812,8 +812,7 @@ def parse_geqo_with_state_machine(logs: list):
     return buffer
 
 def parse_geqo_path(logs: list) -> dict:
-    # _GENE_EXP = r'\[JOVIS\]\[GEQO\]\[JOININFO\]((:? \d)*)'
-    _GENE_EXP = r'\[JOVIS\]\[GEQO\]\[JOININFO\]\ gene=((:? \d)*)'
+    _GENE_EXP = r'\[JOVIS\]\[GEQO\]\[JOININFO\]\ gene=((:? \d+)*)'
 
     cur = 0
     buffer = {}
