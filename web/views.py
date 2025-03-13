@@ -897,28 +897,36 @@ def process_log(log_lines):
     return ret
 
 def try_explain_analyze(in_query: str) -> str:
-    in_query = re.sub(r'/\*.*?\*/', '', in_query, flags=re.DOTALL).strip()
+    # remove comments
+    in_query = re.sub(r'--.*', '', in_query)
+    in_query = re.sub(r'//.*', '', in_query)
+    in_query = re.sub(r'/\*(?!\+)[\s\S]*?\*/', '', in_query).strip()
     
-    hint_match = re.search(r'/\*\+.*?\*/', in_query, re.DOTALL)
+    # extract hint
+    hint_match = re.search(r'/\*\+[\s\S]*?\*/', in_query)
     hint, query = '', ''
-    
+
     if hint_match:
         hint = hint_match.group(0)
         in_query = in_query.replace(hint, '').strip()
-        
+
+    # extract set statements
     set_statements = []
     
     for stmt in in_query.split(';'):
         stmt = stmt.strip()
-        if stmt.lower().startswith("set "):
+        if stmt.lower().startswith("set ") or stmt.lower().startswith("load "):
             set_statements.append(stmt)
         elif stmt:
             query = stmt
     
     if 'explain' not in query.lower():
         query = 'EXPLAIN (ANALYZE true, VERBOSE true, FORMAT JSON) ' + query
-
-    return "; ".join(set_statements) + "; " + hint + ' ' + query
+        
+    if set_statements:
+        return hint + ' '+ "; ".join(set_statements) + "; " + query
+    else:
+        return hint + ' ' + query
         
 class QueryView(APIView):
     def post(self, request, format=None):
