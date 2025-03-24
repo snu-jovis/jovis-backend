@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -133,3 +134,13 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Jovis uses these settings to visualize PostgreSQL optimization logs.
+# Ensure this directory exists before running the application.
+JOVIS_PG = os.getenv('JOVIS_PG', '/var/lib/postgresql')
+PG_LOG_FILE = os.path.join(JOVIS_PG, 'logfile')
+PG_LOG_BACKUP_DIR = os.path.join(JOVIS_PG, 'backup')
+
+if PG_LOG_FILE == '' or PG_LOG_BACKUP_DIR == '':
+    print('Please set PG_LOG_FILE and PG_LOG_BACKUP_DIR before starting.\nYou can configure these in `backend/settings.py`.')
+    exit()
